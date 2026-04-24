@@ -1,0 +1,13 @@
+[package]
+name = "mcts_engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mcts_engine"
+crate-type = ["cdylib"]
+
+[dependencies]
+chess = "3.2.0"
+pyo3 = { version = "0.25.0", features = ["extension-module"] }
+rayon = "1.9"

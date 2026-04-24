@@ -7,6 +7,8 @@ import chess.pgn
 import math
 import random
 import os
+import datetime
+import io
 import time
 import pickle
 from collections import deque
@@ -60,6 +62,14 @@ class AlphaZeroNet(nn.Module):
             nn.Linear(128, 1),
             nn.Tanh()
         )
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, (nn.Linear, nn.Conv2d)):
+            nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.conv_input(x)
@@ -124,8 +134,9 @@ def move_to_index(move, turn):
     direction = (t_sq % 8) - (f_sq % 8) + 1 
     return 4096 + (f_sq % 8) * 9 + direction * 3 + promo_offset[move.promotion]
 
-def batched_self_play(model, num_games=10, num_simulations=100):
+def batched_self_play(model, num_games=10, num_simulations=800):
     device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+
     model.to(device)
     model.eval()
     boards = [chess.Board() for _ in range(num_games)]
@@ -133,6 +144,7 @@ def batched_self_play(model, num_games=10, num_simulations=100):
     game_data = [[] for _ in range(num_games)]
     active_games = list(range(num_games))
     board_histories = [[boards[i].copy()] for i in range(num_games)]
+    game_moves = [[] for _ in range(num_games)]
 
     while active_games:
         for _ in range(num_simulations):
@@ -181,11 +193,39 @@ def batched_self_play(model, num_games=10, num_simulations=100):
                     v = vs[idx].item()
                     
                     temp_board = chess.Board(leaf_fen)
-                    p_dict = {m.uci(): float(policy_logits[move_to_index(m, temp_board.turn)]) 
-                             for m in temp_board.legal_moves}
-                    
+                    legal_moves = list(temp_board.legal_moves)
+
+                    if not legal_moves:
+                        if temp_board.is_checkmate():
+                            v = -1.0 
+                        else:
+                            v = 0.0 
+                        leaf_node.is_terminal = True
+                        leaf_node.term_value = v
+                        for n in reversed(path):
+                            n.update(float(v))
+                            v = -v
+                        continue
+
+                    legal_indices = [move_to_index(m, temp_board.turn) for m in legal_moves]
+                    legal_logits = policy_logits[legal_indices]
+                    legal_logits -= legal_logits.max()
+                    priors = np.exp(legal_logits)
+                    priors /= priors.sum()
+                    p_dict = {m.uci(): float(priors[j]) for j, m in enumerate(legal_moves)}
+
                     leaf_node.expand(leaf_fen, p_dict)
-                    
+
+                    # Dirichle noise
+                    if len(path) == 1:
+                        alpha = 0.3
+                        epsilon = 0.25 
+                        noise = np.random.dirichlet([alpha] * len(legal_moves))
+                        for j, m in enumerate(legal_moves):
+                            child = leaf_node.get_child(m.uci())
+                            if child is not None:
+                                child.p = (1 - epsilon) * child.p + epsilon * noise[j]
+
                     for n in reversed(path):
                         n.update(float(v))
                         v = -v
@@ -200,8 +240,10 @@ def batched_self_play(model, num_games=10, num_simulations=100):
                 counts.append(child.n)
                 moves.append(m_uci)
             
-            if not counts:
-                active_games.remove(i)
+            if not counts or not moves:
+                for step in game_data[i]:
+                    if step[2] is None:
+                        step[2] = 0.0
                 continue
 
             probs = np.array(counts, dtype=np.float32)
@@ -218,12 +260,27 @@ def batched_self_play(model, num_games=10, num_simulations=100):
             
             game_data[i].append([history_to_tensor(board_histories[i]), full_probs, None])
 
-            move_uci = random.choices(moves, weights=probs)[0]
+            probs = np.nan_to_num(probs, nan=0.0)
+            s = probs.sum()
+            if s <= 0:
+                probs = np.ones_like(probs) / len(probs)
+            else:
+                probs /= s
+
+            temperature = 1.0 if len(game_moves[i]) < 30 else 0.1
+            probs_t = probs ** (1.0 / temperature)
+            probs_t /= probs_t.sum()
+            move_uci = random.choices(moves, weights=probs_t)[0]
             move = chess.Move.from_uci(move_uci)
             
             boards[i].push(move)
+            game_moves[i].append(move_uci)
             board_histories[i].append(boards[i].copy())
-            roots[i] = root.get_child(move_uci)
+            new_root = root.get_child(move_uci)
+            if new_root is None:
+                roots[i] = mcts_engine.MCTSNode(1.0)
+            else:
+                roots[i] = new_root
 
             if boards[i].is_game_over():
                 result = boards[i].result()
@@ -233,11 +290,30 @@ def batched_self_play(model, num_games=10, num_simulations=100):
                     final_reward = -1.0
                 else:
                     final_reward = 0.0
+                pgn_game = chess.pgn.Game()
+                pgn_game.headers["Result"] = result
+                pgn_game.headers["White"] = "AlphaZero"
+                pgn_game.headers["Black"] = "AlphaZero"
+                pgn_game.headers["Date"] = datetime.datetime.now()
                 
-                for step in game_data[i]:
-                    step[2] = float(final_reward)
+                node = pgn_game
+                tmp_board = chess.Board()
+                for move_uci in game_moves[i]:
+                    move = chess.Move.from_uci(move_uci)
+                    node = node.add_variation(move)
+                    tmp_board.push(move)
                 
-                active_games.remove(i)
+                pgn_string = io.StringIO()
+
+                with open(f"all_games.pgn", "a") as f:
+                    print(pgn_game, file=f)
+                    print(file=f)
+
+                for step_idx, step in enumerate(game_data[i]):
+                    if final_reward == 0.0:
+                        step[2] = 0.0
+                    else:
+                        step[2] = final_reward if step_idx % 2 == 0 else -final_reward
             else:
                 new_active_games.append(i)
 
@@ -246,5 +322,7 @@ def batched_self_play(model, num_games=10, num_simulations=100):
 
     final_samples = []
     for g in game_data:
-        final_samples.extend(g)
+        for step in g:
+            if step[2] is not None:
+                final_samples.append(tuple(step))
     return final_samples
