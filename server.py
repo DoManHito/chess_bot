@@ -1,39 +1,39 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import chess
-# Импортируем вашего обученного бота
+# Import your trained bot
 from classifiers.move_classifier import MoveClassifier
 from engine.mcts import MoveClassifierMCTS
 
 app = FastAPI()
 
-# Разрешаем сайту обращаться к нашему серверу
+# Allow site to access our server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # В продакшене укажите адрес вашего сайта
+    allow_origins=["*"], # In production, specify your site address
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Инициализируем мозг бота один раз при старте сервера
-print("Загрузка нейросети и MCTS...")
+# Initialize bot brain once at server startup
+print("Loading neural network and MCTS...")
 classifier = MoveClassifier()
 engine = MoveClassifierMCTS(classifier, cpuct=1.5)
 
 @app.get("/get_move")
 def get_move(fen: str, simulations: int = 80):
-    """Эндпоинт, который будет вызывать ваш сайт."""
+    """Endpoint that your site will call."""
     try:
         board = chess.Board(fen)
         if board.is_game_over():
             return {"error": "Game over", "result": board.result()}
             
-        # Запускаем поиск хода
+        # Search for best move
         bot_move = engine.search(board, num_simulations=simulations)
         
         return {
-            "move_uci": bot_move.uci(), # Формат вроде "e2e4" для фронтенда
+            "move_uci": bot_move.uci(), # Format like "e2e4" for frontend
             "move_san": board.san(bot_move)
         }
     except Exception as e:

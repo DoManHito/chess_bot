@@ -7,20 +7,20 @@ from typing import Dict, List, Optional, Tuple
 from classifiers.move_classifier import MoveClassifier
 
 class MCTSNode:
-    """Узел дерева MCTS."""
+    """MCTS tree node."""
     def __init__(self, board: chess.Board, parent: Optional['MCTSNode'] = None, move: Optional[chess.Move] = None):
         self.board = board
         self.parent = parent
-        self.move = move  # Ход, который привёл в эту позицию
+        self.move = move  # Move that led to this position
         
         self.is_expanded = False
         self.children: Dict[chess.Move, 'MCTSNode'] = {}
         
-        # Статистика MCTS
+        # MCTS statistics
         self.visit_count = 0
-        self.total_value = 0.0  # Суммарная оценка (Value)
+        self.total_value = 0.0  # Cumulative value
         
-        # Априорные вероятности из классификатора (Policy/Prior)
+        # Prior probabilities from classifier (Policy/Prior)
         self.priors: Dict[chess.Move, float] = {}
 
     @property
@@ -30,7 +30,7 @@ class MCTSNode:
         return self.total_value / self.visit_count
 
     def get_ucb_score(self, move: chess.Move, cpuct: float = 1.5) -> float:
-        """Расчет метрики UCB (Upper Confidence Bound) для выбора хода."""
+        """Calculate UCB (Upper Confidence Bound) metric for move selection."""
         child = self.children.get(move)
         p_score = self.priors.get(move, 0.0)
         
@@ -39,17 +39,17 @@ class MCTSNode:
             u_score = cpuct * p_score * math.sqrt(self.visit_count) / (1 + child.visit_count)
             return q_score + u_score
         else:
-            # Если узел еще не посещался, у него высокий потенциал за счет Prior
+            # If node not yet visited, it has high potential due to Prior
             return cpuct * p_score * math.sqrt(self.visit_count + 1e-6)
 
 
 class MoveClassifierMCTS:
-    """Движок MCTS, интегрированный с вашей нейросетью."""
+    """MCTS engine integrated with your neural network."""
     def __init__(self, classifier: MoveClassifier, cpuct: float = 1.5):
         self.classifier = classifier
         self.cpuct = cpuct
         
-        # Веса для типов ходов (превращаем классификацию в "Policy" вероятности)
+        # Weights for move types (converting classification to "Policy" probabilities)
         self.class_priority = {
             "Best": 1.0,
             "Excellent": 0.8,
@@ -60,31 +60,31 @@ class MoveClassifierMCTS:
         }
 
     def _evaluate_node_priors(self, node: MCTSNode):
-        """Оценивает все легальные ходы из узла с помощью нейросети (заполнение Priors)."""
+        """Evaluates all legal moves from node using neural network (filling Priors)."""
         legal_moves = list(node.board.legal_moves)
         if not legal_moves:
             return
 
-        # Нам нужно превратить классы нейросети в распределение вероятностей (Priors)
+        # Convert neural network classes to probability distribution (Priors)
         raw_scores = []
         
-        # Делаем предсказания (в идеале тут сделать батчинг, но для начала — быстрый цикл)
+        # Make predictions (ideally batch here, but for now — quick loop)
         for move in legal_moves:
             move_san = node.board.san(move)
             
-            # Виртуальный ход
+            # Virtual move
             node.board.push(move)
             fen_after = node.board.fen()
             node.board.pop()
             
-            # Инференс нашей сети
+            # Network inference
             res = self.classifier.classify_move(node.board.fen(), move_san)
             
-            # Берем базовый вес класса и умножаем на уверенность сети
+            # Get base class weight and multiply by network confidence
             score = self.class_priority.get(res.classification, 0.1) * res.confidence
             raw_scores.append(score)
             
-        # Нормализуем через Softmax (чтобы сумма вероятностей была равна 1.0)
+        # Normalize via Softmax (sum of probabilities equals 1.0)
         exp_scores = np.exp(raw_scores - np.max(raw_scores))
         probabilities = exp_scores / exp_scores.sum()
         
@@ -92,7 +92,7 @@ class MoveClassifierMCTS:
             node.priors[move] = prob
 
     def search(self, initial_board: chess.Board, num_simulations: int = 100) -> chess.Move:
-        """Главный цикл поиска лучшего хода."""
+        """Main search loop for best move."""
         if initial_board.is_game_over():
             return None
         
@@ -103,54 +103,54 @@ class MoveClassifierMCTS:
         for _ in range(num_simulations):
             node = root
             
-            # 1. СЕЛЕКЦИЯ (Selection) - Спускаемся до листа по UCB
+            # 1. SELECTION - Descend to leaf using UCB
             while node.is_expanded and node.board.legal_moves:
                 legal_moves = list(node.board.legal_moves)
                 
-                # Если ходы еще не оценены сетью для этого узла, оцениваем
+                # If moves not yet evaluated by network for this node, evaluate them
                 if not node.priors:
                     self._evaluate_node_priors(node)
                     
                 best_move = max(legal_moves, key=lambda m: node.get_ucb_score(m, self.cpuct))
                 
                 if best_move not in node.children:
-                    # Создаем новый узел-листок
+                    # Create new leaf node
                     next_board = node.board.copy()
                     next_board.push(best_move)
                     node.children[best_move] = MCTSNode(board=next_board, parent=node, move=best_move)
                 
                 node = node.children[best_move]
             
-            # 2. ЭКСПАНСИЯ (Expansion) и СИМУЛЯЦИЯ (Simulation)
-            # Так как у нас пока нет "Value" головы (которая говорит +0.5 или -0.7), 
-            # мы делаем классический rollout (случайную доигровку) или берем оценку материала.
+            # 2. EXPANSION and SIMULATION
+            # Since we don't have a "Value" head yet (which would say +0.5 or -0.7),
+            # we do a classic rollout (random play to finish) or use material evaluation.
             value = self._rollout(node.board)
             
-            # Если это был ход черных, инвертируем оценку для бэкапа
+            # If this was a black move, invert evaluation for backpropagation
             if node.board.turn != initial_board.turn:
                 value = -value
                 
-            # 3. БЭКАП (Backpropagation) - Идем вверх и обновляем статистику
+            # 3. BACKPROPAGATION - Go up and update statistics
             while node is not None:
                 node.visit_count += 1
                 node.total_value += value
-                value = -value  # Меняем знак на каждом уровне дерева (минимаксная логика)
+                value = -value  # Flip sign at each tree level (minimax logic)
                 node = node.parent
                 
-        # Выбираем ход, который посетили чаще всего (самый надежный)
+        # Select move visited most often (most reliable)
         best_move = max(root.children.keys(), key=lambda m: root.children[m].visit_count)
         return best_move
 
     def _rollout(self, board: chess.Board) -> float:
-        """Быстрая эвристическая оценка позиции (материальный баланс).
-        Возвращает значение от -1.0 (выигрыш черных) до 1.0 (выигрыш белых)."""
+        """Fast heuristic position evaluation (material balance).
+        Returns value from -1.0 (black wins) to 1.0 (white wins)."""
         if board.is_game_over():
             result = board.result()
             if result == "1-0": return 1.0
             if result == "0-1": return -1.0
             return 0.0
 
-        # Считаем материал на доске
+        # Calculate material on board
         piece_values = {
             chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
             chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0
@@ -168,8 +168,8 @@ class MoveClassifierMCTS:
                 else:
                     black_material += val
                     
-        # Нормализуем разницу в интервал [-1, 1]
+        # Normalize difference to interval [-1, 1]
         diff = white_material - black_material
-        # Предел в 15 пешек преимущества (все что выше — абсолютная победа)
-        value = math.tanh(diff / 15.0) 
+        # 15 pawn advantage limit (anything above — absolute win)
+        value = math.tanh(diff / 15.0)
         return value

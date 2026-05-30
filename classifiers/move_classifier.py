@@ -16,7 +16,7 @@ class MoveData:
 
 @dataclass
 class MoveClassificationResult:
-    """Результат классификации хода для движка и базы данных."""
+    """Move classification result for engine and database."""
     evaluation: float
     turn_num: int
     turn_label: str
@@ -28,7 +28,7 @@ class MoveClassificationResult:
 
     @property
     def move_number(self) -> int:
-        """Алиас для базы данных, которая ожидает move_number вместо turn_num."""
+        """Alias for database expecting move_number instead of turn_num."""
         return self.turn_num
 
     def __str__(self) -> str:
@@ -38,9 +38,8 @@ class MoveClassificationResult:
         )
 
 class MoveClassifier:
-    """Классификатор ходов на базе нейросети PyTorch."""
+    """Move classifier using PyTorch neural network."""
     def __init__(self, weights_path: str = "models/weights_classifier.pth") -> None:
-        # ИСПРАВЛЕНО: Явно передаем 25 каналов на вход ядра
         core = ChessCoreNet(in_channels=25)
         self.model = MoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES))
         
@@ -49,13 +48,13 @@ class MoveClassifier:
             self.model.eval()
             self.has_weights = True
         except FileNotFoundError:
-            print(f"Предупреждение: Веса {weights_path} не найдены. Классификатор выдает случайные значения.")
+            print(f"Warning: Weights {weights_path} not found. Classifier outputs random values.")
             self.has_weights = False
 
     @staticmethod
     def _board_to_tensor_static(board_before: chess.Board, board_after: chess.Board) -> torch.Tensor:
         """
-        Конвертирует состояние доски ДО и ПОСЛЕ хода в единый 25-канальный тензор (25x8x8).
+        Converts board state BEFORE and AFTER move to unified 25-channel tensor (25x8x8).
         """
         tensor = np.zeros((25, 8, 8), dtype=np.float32)
         
@@ -95,7 +94,7 @@ class MoveClassifier:
         return torch.tensor(tensor, dtype=torch.float32).unsqueeze(0)
 
     def classify_move(self, board_fen: str, move_san: str, evaluation: float = 0.0, turn_num: int = 1, turn_label: str = "White"):
-        """Определяет класс сделанного хода в позиции."""
+        """Classifies the move in the given position."""
         board_before = chess.Board(board_fen)
         board_after = board_before.copy()
 
