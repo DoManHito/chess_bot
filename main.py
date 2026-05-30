@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Import all modules
 from parsers import PGNParser, ParsedGame
-from classifiers import MoveClassifier, MoveClassificationResult
+from classifiers import MoveClassifier, MoveClassificationResult, MoveData
 from database import ChessDatabase, ParsedGame as DBParsedGame, MoveClassification
 
 
@@ -100,36 +100,46 @@ def parse_pgn_file(
             # Classify moves for this game
             move_data = []
             for move in game.moves:
+                fen_before = move.fen_before or ''
+                san = move.san or ''
+                
                 move_data.append(MoveData(
-                    evaluation=move.evaluation,
+                    board_fen=fen_before,
+                    move_san=san,
+                    evaluation=move.evaluation if move.evaluation is not None else 0.0,
                     turn_num=move.turn_num or 0,
                     turn_label=move.turn_label or 'w'
                 ))
             
             # Classify all moves
             classifications = classifier.classify_moves(move_data)
+
+            DEFAULT_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+            fen_end = game.moves[-1].fen_after if game.moves else DEFAULT_START_FEN
             
             # Create game object for database
             db_game = DBParsedGame(
                 id=0,  # Will be set by database
                 white_player=game.headers.get('White', 'Unknown'),
                 black_player=game.headers.get('Black', 'Unknown'),
-                fen_start=game.headers.get('FEN'),
-                fen_end=game.headers.get('FEN'),
+                fen_start=game.headers.get('FEN', DEFAULT_START_FEN),
+                fen_end=fen_end,
                 result=game.headers.get('Result'),
                 classification=game.headers.get('Evaluation', 'Unknown'),
                 created_at=time.strftime('%Y-%m-%d %H:%M:%S')
             )
             
-            # Save game and moves
-            game_id = db.save_game(db_game)
-            db.save_moves_batch(game_id, classifications)
-            
-            # Update game with classifications
-            db_game.id = game_id
+            # Update game with classifications BEFORE saving to DB
             db_game.classification = classifications[0].classification if classifications else 'Unknown'
             
+            # Save game and moves
+            game_id = db.save_game(db_game)
+            db_game.id = game_id # Текущий ID из базы
+            db.save_moves_batch(game_id, classifications)
+            
             processed_games.append(db_game)
+            
             total_moves += len(classifications)
             
             # Call progress callback if provided

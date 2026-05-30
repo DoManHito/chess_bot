@@ -6,7 +6,7 @@ Provides CRUD operations for games and moves.
 import sqlite3
 import threading
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 from dataclasses import dataclass, asdict
 
 from .schema import get_connection, init_database, DB_PATH
@@ -35,6 +35,7 @@ class MoveClassification:
     fen_after: Optional[str]
     move_san: str
     classification: str
+    evaluation: float
     created_at: str
 
 
@@ -115,36 +116,38 @@ class ChessDatabase:
             conn.commit()
             return game.id
     
-    def save_moves_batch(self, game_id: int, moves: List[MoveClassification]) -> int:
+    def save_moves_batch(self, game_id: int, move_classifications: List[Any]) -> None:
         """
         Save a batch of move classifications for a game.
-        
-        Args:
-            game_id: The ID of the game
-            moves: List of move classifications to save
-            
-        Returns:
-            Number of moves saved
         """
+        if not move_classifications:
+            return
+            
         with self._lock:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            count = 0
-            for move in moves:
-                cursor.execute("""
-                    INSERT INTO moves (
-                        game_id, move_number, fen_before, fen_after,
-                        move_san, classification
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    game_id, move.move_number, move.fen_before,
-                    move.fen_after, move.move_san, move.classification
-                ))
-                count += 1
+            query = """
+                INSERT INTO moves (
+                    game_id, move_number, fen_before, fen_after, move_san, classification, evaluation
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
             
+            data = [
+                (
+                    game_id,
+                    move.move_number,
+                    move.fen_before,
+                    move.fen_after,
+                    move.move_san,
+                    move.classification,
+                    move.evaluation
+                )
+                for move in move_classifications
+            ]
+            
+            cursor.executemany(query, data)
             conn.commit()
-            return count
     
     def get_games_by_classification(
         self, 

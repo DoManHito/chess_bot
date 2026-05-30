@@ -1,127 +1,148 @@
-"""Move classification logic based on evaluation thresholds."""
-
+import torch
+import chess
+import numpy as np
+from typing import List
 from dataclasses import dataclass
-from typing import List, Optional
-
-from .classification_config import THRESHOLDS, NEGATIVE_THRESHOLD
-
+from models.chess_nets import ChessCoreNet, MoveClassifierNet
+from .classification_config import CLASS_NAMES
 
 @dataclass
 class MoveData:
-    """Data structure for a single move to classify."""
-    evaluation: float
-    turn_num: int
-    turn_label: str
-
+    board_fen: str = ""
+    move_san: str = ""
+    evaluation: float = 0.0
+    turn_num: int = 1
+    turn_label: str = "White"
 
 @dataclass
 class MoveClassificationResult:
-    """Result of move classification with confidence score."""
+    """Результат классификации хода для движка и базы данных."""
     evaluation: float
     turn_num: int
     turn_label: str
     classification: str
     confidence: float
+    move_san: str = ""       
+    fen_before: str = ""     
+    fen_after: str = ""      
+
+    @property
+    def move_number(self) -> int:
+        """Алиас для базы данных, которая ожидает move_number вместо turn_num."""
+        return self.turn_num
 
     def __str__(self) -> str:
-        """Return string representation of classification result."""
         return (
             f"Turn {self.turn_num} ({self.turn_label}): "
-            f"{self.classification} (eval={self.evaluation:.3f}, conf={self.confidence:.2f})"
+            f"{self.classification} (eval={self.evaluation:.2f}, conf={self.confidence:.2f})"
         )
 
-
 class MoveClassifier:
-    """Classifier for move evaluations."""
+    """Классификатор ходов на базе нейросети PyTorch."""
+    def __init__(self, weights_path: str = "models/weights_classifier.pth") -> None:
+        # ИСПРАВЛЕНО: Явно передаем 25 каналов на вход ядра
+        core = ChessCoreNet(in_channels=25)
+        self.model = MoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES))
+        
+        try:
+            self.model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
+            self.model.eval()
+            self.has_weights = True
+        except FileNotFoundError:
+            print(f"Предупреждение: Веса {weights_path} не найдены. Классификатор выдает случайные значения.")
+            self.has_weights = False
 
-    def __init__(self) -> None:
-        """Initialize the move classifier."""
-        self._thresholds = THRESHOLDS
-
-    def classify_move(
-        self,
-        evaluation: float,
-        turn_num: int,
-        turn_label: str
-    ) -> MoveClassificationResult:
-        """Classify a single move based on evaluation score.
-
-        Args:
-            evaluation: The evaluation score for the move.
-            turn_num: The turn number.
-            turn_label: The label for the turn.
-
-        Returns:
-            MoveClassificationResult with classification and confidence.
+    @staticmethod
+    def _board_to_tensor_static(board_before: chess.Board, board_after: chess.Board) -> torch.Tensor:
         """
-        # Handle missing evaluation data
-        if evaluation is None:
-            return MoveClassificationResult(
-                evaluation=0.0,
-                turn_num=turn_num,
-                turn_label=turn_label,
-                classification="Unknown",
-                confidence=0.0
-            )
+        Конвертирует состояние доски ДО и ПОСЛЕ хода в единый 25-канальный тензор (25x8x8).
+        """
+        tensor = np.zeros((25, 8, 8), dtype=np.float32)
+        
+        piece_to_layer = {
+            chess.PAWN: 0,
+            chess.KNIGHT: 1,
+            chess.BISHOP: 2,
+            chess.ROOK: 3,
+            chess.QUEEN: 4,
+            chess.KING: 5
+        }
+        
+        for square in chess.SQUARES:
+            row = 7 - (square // 8)
+            col = square % 8
+            
+            piece_before = board_before.piece_at(square)
+            if piece_before:
+                layer = piece_to_layer[piece_before.piece_type]
+                if piece_before.color == chess.WHITE:
+                    tensor[layer, row, col] = 1.0
+                else:
+                    tensor[layer + 6, row, col] = 1.0
+                    
+            piece_after = board_after.piece_at(square)
+                    
+            if piece_after:
+                layer = piece_to_layer[piece_after.piece_type]
+                if piece_after.color == chess.WHITE:
+                    tensor[layer + 12, row, col] = 1.0
+                else:
+                    tensor[layer + 18, row, col] = 1.0
+                    
+        if board_before.turn == chess.WHITE:
+            tensor[24, :, :] = 1.0
+            
+        return torch.tensor(tensor, dtype=torch.float32).unsqueeze(0)
 
-        # Handle negative evaluations (moves worse than best)
-        if evaluation < 0:
-            # Negative evaluations are worse than best
-            # Use absolute value for classification, but mark as negative
-            abs_eval = abs(evaluation)
-            classification = self._classify_by_threshold(abs_eval)
-            confidence = min(1.0, abs(evaluation) / 0.2)  # Scale confidence for negative evals
+    def classify_move(self, board_fen: str, move_san: str, evaluation: float = 0.0, turn_num: int = 1, turn_label: str = "White"):
+        """Определяет класс сделанного хода в позиции."""
+        board_before = chess.Board(board_fen)
+        board_after = board_before.copy()
+
+        move_parsed = True
+        try:
+            move = board_after.parse_san(move_san)
+            board_after.push(move)
+        except Exception:
+            move_parsed = False
+
+        fen_after = board_after.fen()
+
+        if not move_parsed or not self.has_weights:
             return MoveClassificationResult(
                 evaluation=evaluation,
                 turn_num=turn_num,
                 turn_label=turn_label,
-                classification=classification,
-                confidence=confidence
+                classification="Unknown",
+                confidence=0.0,
+                move_san=move_san,
+                fen_before=board_fen,
+                fen_after=fen_after
             )
 
-        # Classify positive evaluations using thresholds
-        classification = self._classify_by_threshold(evaluation)
-        confidence = min(1.0, evaluation / 0.2)  # Scale confidence
-
+        tensor = self._board_to_tensor_static(board_before, board_after)
+        
+        with torch.no_grad():
+            logits = self.model(tensor)
+            probabilities = torch.softmax(logits, dim=1).squeeze(0)
+            
+            max_idx = torch.argmax(probabilities).item()
+            confidence = probabilities[max_idx].item()
+            
         return MoveClassificationResult(
             evaluation=evaluation,
             turn_num=turn_num,
             turn_label=turn_label,
-            classification=classification,
-            confidence=confidence
+            classification=CLASS_NAMES[max_idx],
+            confidence=confidence,
+            move_san=move_san,
+            fen_before=board_fen,
+            fen_after=fen_after
         )
 
-    def _classify_by_threshold(self, evaluation: float) -> str:
-        """Classify an evaluation score using the threshold list.
-
-        Args:
-            evaluation: The evaluation score to classify.
-
-        Returns:
-            The classification name.
-        """
-        for threshold in self._thresholds:
-            if threshold.min_evaluation <= evaluation <= threshold.max_evaluation:
-                return threshold.name
-
-        # Fallback for edge cases
-        if evaluation > 1.0:
-            return "Blunder"
-        return "Unknown"
-
-    def classify_moves(
-        self,
-        moves: List[MoveData]
-    ) -> List[MoveClassificationResult]:
-        """Batch classify multiple moves.
-
-        Args:
-            moves: List of MoveData objects to classify.
-
-        Returns:
-            List of MoveClassificationResult objects.
-        """
-        if not moves:
-            return []
-
-        return [self.classify_move(move.evaluation, move.turn_num, move.turn_label) for move in moves]
+    def classify_moves(self, moves: List[MoveData]) -> List[MoveClassificationResult]:
+        results = []
+        for move in moves:
+            res = self.classify_move(move.board_fen, move.move_san, move.evaluation, move.turn_num, move.turn_label)
+            results.append(res)
+        return results

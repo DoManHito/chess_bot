@@ -45,6 +45,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
             fen_after TEXT,
             move_san TEXT,
             classification TEXT,
+            evaluation REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
         )
@@ -69,7 +70,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def init_database() -> None:
+def init_database(db_path: Optional[str] = None) -> None:
     """Initialize the database and create tables."""
     conn = get_connection()
     try:

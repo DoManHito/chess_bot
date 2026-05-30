@@ -1,6 +1,8 @@
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional
+import chess
+import chess.pgn
 
 
 @dataclass
@@ -25,157 +27,86 @@ class ParsedGame:
 
 
 class PGNParser:
-    """Parser for PGN (Portable Game Notation) chess files."""
-
-    # Regex patterns
-    HEADER_PATTERN = re.compile(r'\[([A-Za-z0-9_\-]+)\s+"(.+)"\]')
-    MOVE_NUMBER_PATTERN = re.compile(r'(\d+\. (?:\d+\. )?)')
-    EVAL_PATTERN = re.compile(r'\{(\+?[\d.]+)\}')
-    EVAL_PATTERN_NO_BRACKETS = re.compile(r'(\+?[\d.]+)')
-    SAN_PATTERN = re.compile(r'[a-h][1-8][a-h][1-8]|[a-h][1-8][=nbrq]|[a-h][=nbrq]|[Oo][o][o]|0-0-0|0-0|K[+-]?[a-h][1-8]?|k[+-]?[a-h][1-8]?|[NBRQKbnrqk]\d+[=nbrq]?|[NBRQKbnrqk][a-h][1-8]?|[=nbrq]')
-
-    def __init__(self):
-        """Initialize the PGN parser."""
-        pass
-
-    def _extract_headers(self, content: str) -> dict:
-        """Extract PGN headers from content."""
-        headers = {}
-        for match in self.HEADER_PATTERN.finditer(content):
-            key = match.group(1)
-            value = match.group(2)
-            headers[key] = value
-        return headers
-
-    def _extract_evaluation(self, move_text: str) -> Optional[float]:
-        """Extract evaluation score from move annotation."""
-        # First try with brackets {+0.55}
-        match = self.EVAL_PATTERN.search(move_text)
-        if match:
-            eval_str = match.group(1)
-            return float(eval_str)
-        
-        # Try without brackets +0.55
-        match = self.EVAL_PATTERN_NO_BRACKETS.search(move_text)
-        if match:
-            eval_str = match.group(1)
-            return float(eval_str)
-        
-        return None
-
-    def _parse_moves(self, content: str) -> List[ParsedMove]:
-        """Parse moves from PGN content."""
-        moves = []
-        lines = content.strip().split('\n')
-        
-        current_turn_num = 1
-        current_turn_label = 'w'
-        fen_before = None
-        fen_after = None
-        
-        for line in lines:
-            line = line.strip()
-            
-            # Skip empty lines and comments
-            if not line or line.startswith('('):
-                continue
-            
-            # Check for move number
-            move_match = self.MOVE_NUMBER_PATTERN.search(line)
-            
-            if move_match:
-                # Extract turn number and label
-                turn_num_str = move_match.group(1)
-                current_turn_num = int(turn_num_str.split('.')[0])
-                
-                # Determine turn label based on turn number
-                # White moves on odd turns, black on even
-                current_turn_label = 'w' if current_turn_num % 2 == 1 else 'b'
-                
-                # Extract evaluation from this line
-                evaluation = self._extract_evaluation(line)
-                
-                # Extract SAN notation (the actual move)
-                san_match = self.SAN_PATTERN.search(line)
-                san = san_match.group(0) if san_match else line.strip()
-                
-                # Remove evaluation from SAN if present
-                san = self.EVAL_PATTERN.sub('', san).strip()
-                
-                move = ParsedMove(
-                    move=line.strip(),
-                    san=san,
-                    turn_num=current_turn_num,
-                    turn_label=current_turn_label,
-                    evaluation=evaluation
-                )
-                moves.append(move)
-                
-                # Try to extract FEN before/after if available
-                # This would require a FEN parser, which is optional
-                # For now, we leave these as None
-                
-            else:
-                # No move number, might be a continuation or annotation
-                # Check if it's a continuation (no move number)
-                if not line.startswith('{') and not line.startswith('['):
-                    san_match = self.SAN_PATTERN.search(line)
-                    if san_match:
-                        san = san_match.group(0)
-                        evaluation = self._extract_evaluation(line)
-                        move = ParsedMove(
-                            move=line.strip(),
-                            san=san,
-                            turn_label=current_turn_label,
-                            evaluation=evaluation
-                        )
-                        moves.append(move)
-        
-        return moves
-
+    """Умный потоковый парсер, который ищет только 6% партий с оценками Stockfish."""
+    
     def parse_file(self, file_path: str) -> List[ParsedGame]:
-        """Parse PGN file containing one or more games."""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        return self.parse_string(content)
-
-    def parse_string(self, pgn_content: str) -> List[ParsedGame]:
-        """Parse PGN content from string."""
         games = []
         
-        # Split content into individual games
-        # Games are separated by empty lines or new game markers
-        game_blocks = re.split(r'\n\s*\n\s*\[Event', pgn_content)
+        print(f"Начинаю фильтрацию и парсинг файла: {file_path}")
+        print("Ищу партии со встроенным анализом Stockfish (те самые 6%)...")
         
-        # First block might be empty or contain headers from previous game
-        if game_blocks and game_blocks[0].strip():
-            # Check if first block has game content
-            if '[' not in game_blocks[0]:
-                game_blocks = game_blocks[1:]
-        
-        for block in game_blocks:
-            if not block.strip():
-                continue
+        with open(file_path, 'r', encoding='utf-8') as pgn_file:
+            checked_games = 0
+            saved_games = 0
             
-            game = ParsedGame()
-            
-            # Extract headers
-            headers = self._extract_headers(block)
-            game.headers = headers
-            
-            # Extract result if present
-            if 'Result' in headers:
-                game.result = headers['Result']
-            
-            # Extract FEN if present
-            if 'FEN' in headers:
-                game.evaluation = self._extract_evaluation(headers['FEN'])
-            
-            # Parse moves
-            moves = self._parse_moves(block)
-            game.moves = moves
-            
-            games.append(game)
-        
+            while True:
+                # Читаем одну партию из файла (тратит всего пару КБ памяти)
+                lichess_game = chess.pgn.read_game(pgn_file)
+                if lichess_game is None:
+                    break  # Дошли до конца файла
+                
+                checked_games += 1
+                
+                # --- ТРЮК ФИЛЬТРАЦИИ ---
+                # Заглядываем в первый ход игры. Если в нем нет упоминания '%eval',
+                # значит Lichess не обсчитывал эту партию. Пропускаем её целиком!
+                first_move_node = lichess_game.next()
+                if first_move_node is None or "%eval" not in first_move_node.comment:
+                    continue # Переходим к следующей игре
+                
+                # Если мы дошли сюда — ура! Это одна из тех 6% партий, которые нам нужны.
+                parsed_game = ParsedGame()
+                parsed_game.headers = dict(lichess_game.headers)
+                parsed_game.result = parsed_game.headers.get("Result", "*")
+                
+                board = lichess_game.board()
+                node = lichess_game
+                turn_num = 1
+                
+                while node.variations:
+                    next_node = node.variation(0)
+                    move = next_node.move
+                    
+                    parsed_move = ParsedMove(
+                        move=move.uci(),
+                        san=board.san(move),
+                        fen_before=board.fen(),
+                        turn_num=turn_num,
+                        turn_label="White" if board.turn == chess.WHITE else "Black"
+                    )
+                    
+                    board.push(move)
+                    parsed_move.fen_after = board.fen()
+                    
+                    # Извлекаем оценку [%eval 2.35] или [%eval #-4] (мат)
+                    comment = next_node.comment
+                    eval_match = re.search(r'%eval\s+([+-]?#?\d+\.?\d*)', comment)
+                    
+                    if eval_match:
+                        eval_str = eval_match.group(1)
+                        if '#' in eval_str:
+                            # Если там мат (например #4 или #-2), превращаем в условную большую оценку
+                            parsed_move.evaluation = 99.0 if '-' not in eval_str else -99.0
+                        else:
+                            parsed_move.evaluation = float(eval_str)
+                    else:
+                        parsed_move.evaluation = 0.0
+                    
+                    parsed_game.moves.append(parsed_move)
+                    
+                    node = next_node
+                    if board.turn == chess.WHITE:
+                        turn_num += 1
+                
+                games.append(parsed_game)
+                saved_games += 1
+                
+                if saved_games % 100 == 0:
+                    print(f"Сканировано игр: {checked_games} | Найдено и сохранено партий с ИИ: {saved_games}")
+                
+                # Для первого теста соберем ровно 1000 качественных ИИ-партий
+                if saved_games >= 100000:
+                    print(f"\nУспех! Собрано первые {saved_games} игр со Stockfish-оценками.")
+                    break
+                    
         return games

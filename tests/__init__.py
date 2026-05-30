@@ -1,1 +1,0 @@
-"""Chess bot test suite."""
