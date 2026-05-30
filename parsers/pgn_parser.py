@@ -27,34 +27,33 @@ class ParsedGame:
 
 
 class PGNParser:
-    """Умный потоковый парсер, который ищет только 6% партий с оценками Stockfish."""
+    """Smart streaming parser that searches for only 6% of games with Stockfish evaluations."""
     
     def parse_file(self, file_path: str) -> List[ParsedGame]:
         games = []
         
-        print(f"Начинаю фильтрацию и парсинг файла: {file_path}")
-        print("Ищу партии со встроенным анализом Stockfish (те самые 6%)...")
+        print(f"Starting filtering and parsing file: {file_path}")
+        print("Searching for games with built-in Stockfish analysis (the 6%)...")
         
         with open(file_path, 'r', encoding='utf-8') as pgn_file:
             checked_games = 0
             saved_games = 0
             
             while True:
-                # Читаем одну партию из файла (тратит всего пару КБ памяти)
+                # Read one game from file (uses only a few KB of memory)
                 lichess_game = chess.pgn.read_game(pgn_file)
                 if lichess_game is None:
                     break  # Дошли до конца файла
                 
                 checked_games += 1
                 
-                # --- ТРЮК ФИЛЬТРАЦИИ ---
-                # Заглядываем в первый ход игры. Если в нем нет упоминания '%eval',
-                # значит Lichess не обсчитывал эту партию. Пропускаем её целиком!
+                # --- FILTERING TRICK ---
+                # Peek at the first move of the game. If it doesn't contain '%eval',
+                # then Lichess didn't analyze this game. Skip it entirely!
                 first_move_node = lichess_game.next()
                 if first_move_node is None or "%eval" not in first_move_node.comment:
-                    continue # Переходим к следующей игре
+                    continue  # Move to the next game
                 
-                # Если мы дошли сюда — ура! Это одна из тех 6% партий, которые нам нужны.
                 parsed_game = ParsedGame()
                 parsed_game.headers = dict(lichess_game.headers)
                 parsed_game.result = parsed_game.headers.get("Result", "*")
@@ -78,14 +77,14 @@ class PGNParser:
                     board.push(move)
                     parsed_move.fen_after = board.fen()
                     
-                    # Извлекаем оценку [%eval 2.35] или [%eval #-4] (мат)
+                    # Extract evaluation [%eval 2.35] or [%eval #-4] (mate)
                     comment = next_node.comment
                     eval_match = re.search(r'%eval\s+([+-]?#?\d+\.?\d*)', comment)
                     
                     if eval_match:
                         eval_str = eval_match.group(1)
                         if '#' in eval_str:
-                            # Если там мат (например #4 или #-2), превращаем в условную большую оценку
+                            # If it's mate (e.g., #4 or #-2), convert to a large evaluation
                             parsed_move.evaluation = 99.0 if '-' not in eval_str else -99.0
                         else:
                             parsed_move.evaluation = float(eval_str)
@@ -102,11 +101,10 @@ class PGNParser:
                 saved_games += 1
                 
                 if saved_games % 100 == 0:
-                    print(f"Сканировано игр: {checked_games} | Найдено и сохранено партий с ИИ: {saved_games}")
+                    print(f"Scanned games: {checked_games} | Found and saved games with AI: {saved_games}")
                 
-                # Для первого теста соберем ровно 1000 качественных ИИ-партий
                 if saved_games >= 100000:
-                    print(f"\nУспех! Собрано первые {saved_games} игр со Stockfish-оценками.")
+                    print(f"\nSuccess! Collected first {saved_games} games with Stockfish evaluations.")
                     break
                     
         return games

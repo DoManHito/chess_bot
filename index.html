@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Игра против MCTS Бота</title>
+    <title>Play Against MCTS Bot</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
     <style>
         body { display: flex; flex-direction: column; align-items: center; font-family: Arial, sans-serif; background: #222; color: #fff; }
@@ -12,9 +12,9 @@
 </head>
 <body>
 
-    <h2>Шахматный бот (Нейросеть + MCTS)</h2>
+    <h2>Chess Bot (Neural Network + MCTS)</h2>
     <div id="myBoard"></div>
-    <div id="status">Ваш ход (Белые)</div>
+    <div id="status">Your Turn (White)</div>
 
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
@@ -22,42 +22,38 @@
 
     <script>
         var board = null;
-        var game = new Chess(); // Логика игры на клиенте
+        var game = new Chess();
         var $status = $('#status');
 
         function makeBotMove() {
             if (game.game_over()) return;
 
-            $status.html('Бот думает...');
+            $status.html('Bot is thinking...');
 
-            // Делаем запрос к нашему Python FastAPI серверу
             $.get('http://127.0.0.1:8000/get_move', { fen: game.fen() }, function(data) {
                 if (data.error) {
-                    $status.html('Ошибка сервера: ' + data.error);
+                    $status.html('Server error: ' + data.error);
                     return;
                 }
 
-                // Кладём ход бота в логику игры и двигаем фигуру на доске
                 game.move({ uci: true, from: data.move_uci.substring(0, 2), to: data.move_uci.substring(2, 4) });
                 board.position(game.fen());
                 
                 if (game.game_over()) {
-                    $status.html('Игра окончена!');
+                    $status.html('Game over!');
                 } else {
-                    $status.html('Ваш ход! Бот сыграл: ' + data.move_san);
+                    $status.html('Your turn! Bot played: ' + data.move_san);
                 }
             });
         }
 
         function onDragStart(source, piece, position, orientation) {
-            // Не даем двигать фигуры, если игра окончена или сейчас ход черных (бота)
             if (game.game_over() || game.turn() === 'b') return false;
         }
 
         function onDrop(source, target) {
             var move = game.move({ from: source, to: target, promotion: 'q' });
-            if (move === null) return 'snapback'; // Это уже есть у вас
-            // Добавьте обновление доски перед тем как бот начнет думать
+            if (move === null) return 'snapback';
             board.position(game.fen()); 
             window.setTimeout(makeBotMove, 250);
         }

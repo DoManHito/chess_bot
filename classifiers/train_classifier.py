@@ -13,14 +13,14 @@ from classifiers.move_classifier import MoveClassifier
 from classifiers.classification_config import CLASS_NAMES, THRESHOLDS, NEGATIVE_THRESHOLD
 
 class ChessDataset(Dataset):
-    """Оптимизированный датасет: загружает fen_before и готовую fen_after напрямую из БД."""
+    """Optimized dataset: loads fen_before and ready fen_after directly from the database."""
     def __init__(self, db_path="chess_bot.db", game_ids=None):
         self.samples = [] 
-        # Убираем жесткую инициализацию отсюда, чтобы процессы не конфликтовали
+        # Avoid rigid initialization here to prevent process conflicts
         self.classifier_utils = None 
         self.db_path = db_path
         
-        # Превращаем в set для моментального поиска по O(1) при итерации по строкам
+        # Convert to set for O(1) lookup during iteration
         self.game_ids = set(game_ids) if game_ids is not None else None
         
         self._load_and_label_data_lightweight(db_path)
@@ -29,7 +29,7 @@ class ChessDataset(Dataset):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        print(f"Сканируем базу данных и рассчитываем классы (Фильтр по играм: {self.game_ids is not None})...")
+        print(f"Scanning database and calculating classes (Game filter: {self.game_ids is not None})...")
         cursor.execute("""
             SELECT game_id, fen_before, fen_after, evaluation 
             FROM moves 
@@ -54,52 +54,48 @@ class ChessDataset(Dataset):
             except (ValueError, TypeError):
                 continue
 
-            # Фильтр по принадлежности к train/val подвыборке
+            # Filter by membership in train/val subset
             if self.game_ids is not None and current_id not in self.game_ids:
                 continue
                 
-            # Сброс контекста оценки при смене партии
+            # Reset evaluation context when game changes
             if prev_game_id != current_id:
                 prev_game_id = current_id
                 prev_eval = 0.3 if evaluation is None else evaluation
             
             current_eval = evaluation if evaluation is not None else prev_eval
             
-            # Определяем чья очередь ходить по FEN перед ходом
             is_white = " w " in fen_before
             
-            # Считаем потерю оценки (разницу)
+            # Calculate evaluation loss (difference)
             if is_white:
                 delta = prev_eval - current_eval
             else:
                 delta = current_eval - prev_eval
 
-            # Сглаживание дельты при сильном перевесе одной из сторон
+            # Smooth delta when one side has a strong material advantage
             if abs(prev_eval) > 3.0:
                 delta = delta * 0.3
                 
-            # --- ИСПРАВЛЕННЫЙ И БЕЗОПАСНЫЙ МАППИНГ ДЕЛЬТЫ НА КЛАССЫ ---
-            from classifiers.classification_config import THRESHOLDS
             
-            # Если ход сохранил или улучшил оценку (delta <= макс. значению для Best, например 0.02)
+            # If move maintained or improved evaluation (delta <= max value for Best, e.g., 0.02)
             if delta <= THRESHOLDS[0].max_evaluation:
-                class_idx = 0  # Идеальный ход ("Best")
+                class_idx = 0  # Ideal move ("Best")
             else:
-                class_idx = 5  # По умолчанию "Blunder" (если дельта огромная и не попала в диапазоны ниже)
+                class_idx = 5  # Default "Blunder" (if delta is huge and doesn't fall into ranges below)
                 for idx, t in enumerate(THRESHOLDS):
-                    # Используем строгое сравнение верхнего порога <, чтобы исключить наложения
+                    # Use strict upper threshold comparison < to avoid overlaps
                     if t.min_evaluation <= delta < t.max_evaluation:
                         class_idx = idx
                         break
             
-            # Добавляем кортеж данных в список семплов
+            # Append data tuple to samples list
             self.samples.append((fen_before, fen_after, class_idx))
             
-            # ВАЖНО: Запоминаем оценку. Теперь это гарантированно выполняется для каждого хода!
             prev_eval = current_eval
 
         conn.close()
-        print(f"Успешно загружено ходов в датасет: {len(self.samples)}")
+        print(f"Successfully loaded moves into dataset: {len(self.samples)}")
 
     def __len__(self):
         return len(self.samples)
@@ -118,12 +114,11 @@ class ChessDataset(Dataset):
 
 
 def get_all_game_ids(db_path="chess_bot.db"):
-    """Вспомогательная функция для быстрого сбора уникальных ID партий из БД."""
+    """Helper function for quickly collecting unique game IDs from the database."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT game_id FROM moves WHERE game_id IS NOT NULL")
     
-    # Приводим строго к числу int
     game_ids = []
     for row in cursor.fetchall():
         try:
@@ -139,28 +134,28 @@ if __name__ == "__main__":
     db_path = "chess_bot.db"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # 1. Загружаем и честно делим уникальные ID партий (80% на 20%)
+    # 1. Load and fairly split unique game IDs (80% to 20%)
     all_games = get_all_game_ids(db_path)
-    print(f"Всего уникальных партий в базе данных: {len(all_games)}")
+    print(f"Total unique games in database: {len(all_games)}")
     
-    random.seed(42) # Фиксируем seed для воспроизводимости разбиения
+    random.seed(42) # Fixing seed for reproducibility of the split
     random.shuffle(all_games)
     
     split_idx = int(0.8 * len(all_games))
     train_game_ids = all_games[:split_idx]
     val_game_ids = all_games[split_idx:]
     
-    print(f"Выделено партий для обучения (train): {len(train_game_ids)}")
-    print(f"Выделено партий для валидации (val): {len(val_game_ids)}")
+    print(f"Games allocated for training (train): {len(train_game_ids)}")
+    print(f"Games allocated for validation (val): {len(val_game_ids)}")
     
-    # 2. Инициализируем ДВА независимых объекта датасета
-    print("\nИнициализация тренировочного датасета...")
+    # 2. Initialize TWO independent dataset objects
+    print("\nInitializing training dataset...")
     train_dataset = ChessDataset(db_path=db_path, game_ids=train_game_ids)
     
-    print("\nИнициализация валидационного датасета...")
+    print("\nInitializing validation dataset...")
     val_dataset = ChessDataset(db_path=db_path, game_ids=val_game_ids)
     
-    # 3. Оборачиваем в DataLoader (Разные оптимальные размеры батчей)
+    # 3. Wrap in DataLoader (Different optimal batch sizes)
     num_workers = 4 
 
     train_loader = DataLoader(
@@ -179,27 +174,27 @@ if __name__ == "__main__":
         pin_memory=True
     )
     
-    # 4. Рассчитываем веса классов СТРОГО по тренировочной выборке
+    # 4. Calculate class weights STRICTLY from the training subset
     train_targets = [sample[-1] for sample in train_dataset.samples]
     target_counts = Counter(train_targets)
     total_train_samples = len(train_targets)
     
-    # ИСПРАВЛЕНО: Сглаживание через квадратный корень (Square Root Smoothing)
-    # Это не даст редкому классу получить деструктивно огромный вес
+    # CORRECTED: Smoothing via square root (Square Root Smoothing)
+    # This prevents rare classes from getting destructively huge weights
     class_weights = []
     for i in range(len(CLASS_NAMES)):
         count = target_counts.get(i, 1)
         weight = (total_train_samples / count) ** 0.5
         class_weights.append(weight)
         
-    # Нормализуем полученные веса, чтобы их среднее значение было равно 1.0
+    # Normalize obtained weights so their mean value equals 1.0
     mean_weight = sum(class_weights) / len(class_weights)
     class_weights = [w / mean_weight for w in class_weights]
         
     class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
-    print(f"Рассчитанные (СГЛАЖЕННЫЕ и НОРМАЛИЗОВАННЫЕ) веса для классов: {class_weights}")
+    print(f"Calculated (SMOOTHED and NORMALIZED) weights for classes: {class_weights}")
     
-    # 5. Собираем модель классификатора
+    # 5. Assemble the classifier model
     core = ChessCoreNet(in_channels=25)
     model = MoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES))
     model = model.to(device)
@@ -207,24 +202,24 @@ if __name__ == "__main__":
     weights_path = "models/weights_classifier.pth"
     try:
         model.load_state_dict(torch.load(weights_path, map_location=device))
-        print(f"Успешно загружены существующие веса из {weights_path}.")
+        print(f"Successfully loaded existing weights from {weights_path}.")
     except FileNotFoundError:
-        print("Веса не найдены. Начинаем обучение модели с нуля.")
+        print("Weights not found. Starting model training from scratch.")
     
-    # 6. Настройка функции потерь и оптимизатора с регуляризацией
+    # 6. Setup loss function and optimizer with regularization
     criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
     optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4) 
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=1, factor=0.5)
     
-    # 7. Основной цикл совмещенного обучения и валидации
+    # 7. Main combined training and validation loop
     epochs = 20  
     best_val_loss = float('inf')
     
-    print(f"\nЗапуск обучения классификатора на устройстве: {device}")
+    print(f"\nStarting classifier training on device: {device}")
     for epoch in range(epochs):
         
-        # --- ФАЗА ОБУЧЕНИЯ (Train) ---
+        # --- TRAINING PHASE (Train) ---
         model.train() 
         total_train_loss = 0
         train_correct = 0
@@ -246,9 +241,9 @@ if __name__ == "__main__":
             
         epoch_train_loss = total_train_loss / len(train_loader)
         epoch_train_acc = 100.0 * train_correct / train_total
-        print(f"Эпоха {epoch+1}/{epochs} | Лосс обучения: {epoch_train_loss:.4f} | Точность обучения: {epoch_train_acc:.2f}%")
+        print(f"Epoch {epoch+1}/{epochs} | Training Loss: {epoch_train_loss:.4f} | Training Accuracy: {epoch_train_acc:.2f}%")
         
-        # --- ФАЗА ВАЛИДАЦИИ (Validation) ---
+        # --- VALIDATION PHASE (Validation) ---
         model.eval() 
         total_val_loss = 0
         val_correct = 0
@@ -268,18 +263,18 @@ if __name__ == "__main__":
         
         epoch_val_loss = total_val_loss / len(val_loader)
         epoch_val_acc = 100.0 * val_correct / val_total
-        print(f"--> Валидация | Лосс: {epoch_val_loss:.4f} | ЧЕСТНАЯ Точность: {epoch_val_acc:.2f}%")
+        print(f"--> Validation | Loss: {epoch_val_loss:.4f} | HONEST Accuracy: {epoch_val_acc:.2f}%")
 
         scheduler.step(epoch_val_loss)
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"Текущий шаг обучения (LR): {current_lr:.6f}")
+        print(f"Current training step (LR): {current_lr:.6f}")
         
-        # --- СОХРАНЕНИЕ НАИЛУЧШИХ РЕЗУЛЬТАТОВ (Checkpoint) ---
+        # --- SAVE BEST RESULTS (Checkpoint) ---
         if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss
             torch.save(model.state_dict(), weights_path)
-            print(f"Веса сохранены! Лосс валидации снизился до наилучшего: {best_val_loss:.4f}")
+            print(f"Weights saved! Validation loss decreased to best: {best_val_loss:.4f}")
         else:
-            print(f"Веса не перезаписаны. Лучший лосс по-прежнему: {best_val_loss:.4f}")
+            print(f"Weights not overwritten. Best loss remains: {best_val_loss:.4f}")
             
         print("-" * 65)

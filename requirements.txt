@@ -1,0 +1,16 @@
+# Chess Bot Project Dependencies
+# Generated for project: /home/domanhito/Projects/SGGW/chess_bot
+
+# Core ML/AI libraries
+torch>=2.0.0
+numpy>=1.21.0
+
+# Chess library for board manipulation
+chess>=1.1.0
+
+# Web server and API
+fastapi>=0.100.0
+uvicorn>=0.22.0
+
+# Progress bars for training
+tqdm>=4.65.0
