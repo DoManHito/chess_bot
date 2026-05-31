@@ -10,7 +10,7 @@ from classifiers.move_classifier import MoveClassifier
 from classifiers.classification_config import CLASS_NAMES
 
 class ChessSelfPlayDataset(Dataset):
-    def __init__(self, db_path="chess_bot.db"):
+    def __init__(self, db_path="chess_bot.db", device=None):
         self.db_path = db_path
         self.samples = []
         
@@ -18,7 +18,18 @@ class ChessSelfPlayDataset(Dataset):
         if not os.path.exists(self.weights_path):
             print(f"⚠️ Предупреждение: Файл {self.weights_path} не найден!")
             
-        self.classifier_utils = MoveClassifier(weights_path=self.weights_path) 
+        # Ограничиваем внутренние потоки PyTorch, чтобы DataLoader не зависал
+        torch.set_num_threads(1)
+
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
+
+        if self.device == "cpu":
+            torch.set_num_threads(1)
+        
+        self.classifier_utils = MoveClassifier(weights_path=self.weights_path, device=device)
+        self.classifier_utils.model.eval()  # Гарантируем режим валидации
         self._load_data()
 
     def _load_data(self):
@@ -48,8 +59,13 @@ class ChessSelfPlayDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
+        # Защита внутренних воркеров DataLoader от взаимной блокировки потоков CPU
+        if self.device == "cpu":
+            torch.set_num_threads(1)
+        
         sample = self.samples[idx]
         board = chess.Board(sample["fen"])
+        value_target = torch.tensor(sample["value"], dtype=torch.float32)
         
         board_after = board.copy()
         try:
@@ -61,32 +77,37 @@ class ChessSelfPlayDataset(Dataset):
             
         input_tensor = self.classifier_utils._board_to_tensor_static(board, board_after).squeeze(0)
     
-        # Превращаем MCTS политику ходов в распределение по КЛАССАМ качества
         policy_dict = sample["policy_dict"]
+        class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
 
         if not policy_dict:
-            class_target_distribution = np.ones(len(CLASS_NAMES)) / len(CLASS_NAMES)
-            print("policy_dict is empty")
+            class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
             return input_tensor, torch.tensor(class_target_distribution, dtype=torch.float32), value_target
         
-        class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
-        
-        for move_uci, mcts_prob in policy_dict.items():
+        moves_uci_list = list(policy_dict.keys())
+        mcts_probs = list(policy_dict.values())
+
+        moves_san = []
+        valid_indices = []
+
+        for i, mu in enumerate(moves_uci_list):
             try:
-                m_obj = chess.Move.from_uci(move_uci)
-                m_san = board.san(m_obj)
-                res, _ = self.classifier_utils.classify_move(sample["fen"], m_san)
-                c_idx = CLASS_NAMES.index(res.classification)
-                class_target_distribution[c_idx] += mcts_prob
+                m_obj = chess.Move.from_uci(mu)
+                moves_san.append(board.san(m_obj))
+                valid_indices.append(i)
             except Exception:
-                class_target_distribution[0] += mcts_prob # Дефолт в Best
+                class_target_distribution[0] += mcts_probs[i]  # Дефолт в Best
+
+        if moves_san:
+            classes, _, _ = self.classifier_utils.classify_moves_batch(board, moves_san)
+            for cls, i in zip(classes, valid_indices):
+                c_idx = CLASS_NAMES.index(cls) if cls in CLASS_NAMES else 0
+                class_target_distribution[c_idx] += mcts_probs[i]
                 
-        # Нормализуем распределение (smooth)
         sum_dist = class_target_distribution.sum()
         if sum_dist > 0:
             class_target_distribution /= sum_dist
         else:
-            class_target_distribution = np.ones(len(CLASS_NAMES)) / len(CLASS_NAMES)
+            class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
 
-        value_target = torch.tensor(sample["value"], dtype=torch.float32)
         return input_tensor, torch.tensor(class_target_distribution, dtype=torch.float32), value_target

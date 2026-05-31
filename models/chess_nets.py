@@ -18,7 +18,7 @@ class ChessResidualBlock(nn.Module):
         return F.relu(out)
 
 class ChessCoreNet(nn.Module):
-    def __init__(self, in_channels=13, num_blocks=4, hidden_channels=128):
+    def __init__(self, in_channels=25, num_blocks=4, hidden_channels=128):
         super().__init__()
         self.conv_init = nn.Conv2d(in_channels, hidden_channels, kernel_size=3, padding=1)
         self.bn_init = nn.BatchNorm2d(hidden_channels)
