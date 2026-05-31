@@ -1,0 +1,10 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "name": "chess_bot",
+            "database": "${workspaceFolder:chess_bot}/chess_bot.db"
+        }
+    ]
+}

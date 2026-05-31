@@ -44,7 +44,7 @@ class MoveClassifier:
         self.model = MoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES))
         
         try:
-            self.model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
+            self.model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')), strict=False)
             self.model.eval()
             self.has_weights = True
         except FileNotFoundError:
@@ -94,7 +94,7 @@ class MoveClassifier:
         return torch.tensor(tensor, dtype=torch.float32).unsqueeze(0)
 
     def classify_move(self, board_fen: str, move_san: str, evaluation: float = 0.0, turn_num: int = 1, turn_label: str = "White"):
-        """Classifies the move in the given position."""
+        """Classifies the move and returns its neural value estimation."""
         board_before = chess.Board(board_fen)
         board_after = board_before.copy()
 
@@ -109,35 +109,29 @@ class MoveClassifier:
 
         if not move_parsed or not self.has_weights:
             return MoveClassificationResult(
-                evaluation=evaluation,
-                turn_num=turn_num,
-                turn_label=turn_label,
-                classification="Unknown",
-                confidence=0.0,
-                move_san=move_san,
-                fen_before=board_fen,
-                fen_after=fen_after
-            )
+                evaluation=evaluation, turn_num=turn_num, turn_label=turn_label,
+                classification="Unknown", confidence=0.0,
+                move_san=move_san, fen_before=board_fen, fen_after=fen_after
+            ), 0.0 # Возвращаем 0.0 в качестве дефолтного value
 
         tensor = self._board_to_tensor_static(board_before, board_after)
         
         with torch.no_grad():
-            logits = self.model(tensor)
-            probabilities = torch.softmax(logits, dim=1).squeeze(0)
+            # Модель теперь возвращает кортеж (logits, value)
+            logits, value_tensor = self.model(tensor)
             
+            probabilities = torch.softmax(logits, dim=1).squeeze(0)
             max_idx = torch.argmax(probabilities).item()
             confidence = probabilities[max_idx].item()
             
+            # Извлекаем скалярное значение оценки позиции (-1.0 ... 1.0)
+            predicted_value = value_tensor.item()
+            
         return MoveClassificationResult(
-            evaluation=evaluation,
-            turn_num=turn_num,
-            turn_label=turn_label,
-            classification=CLASS_NAMES[max_idx],
-            confidence=confidence,
-            move_san=move_san,
-            fen_before=board_fen,
-            fen_after=fen_after
-        )
+            evaluation=evaluation, turn_num=turn_num, turn_label=turn_label,
+            classification=CLASS_NAMES[max_idx], confidence=confidence,
+            move_san=move_san, fen_before=board_fen, fen_after=fen_after
+        ), predicted_value
 
     def classify_moves(self, moves: List[MoveData]) -> List[MoveClassificationResult]:
         results = []

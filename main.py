@@ -297,6 +297,15 @@ Examples:
     )
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # === НОВАЯ КОМАНДА ДЛЯ ЦИКЛА ОБУЧЕНИЯ ===
+    rl_parser = subparsers.add_parser('auto-train', help='Запустить зацикленный процесс Self-Play и обучения')
+    rl_parser.add_argument('--iters', type=int, default=10, help='Количество глобальных итераций цикла (по умолчанию: 10)')
+    rl_parser.add_argument('--games', type=int, default=20, help='Партий генерируется за 1 итерацию (по умолчанию: 20)')
+    rl_parser.add_argument('--sims', type=int, default=60, help='Симуляций MCTS на каждый ход (по умолчанию: 60)')
+    rl_parser.add_argument('--epochs', type=int, default=5, help='Эпох обучения нейросети за 1 итерацию (по умолчанию: 5)')
+    rl_parser.add_argument('--keep-n', type=int, default=100, help='Сколько последних партий хранить в базе (по умолчанию: 100)')
+    rl_parser.add_argument('--db-path', default='chess_bot.db', help='Путь к БД (по умолчанию: chess_bot.db)')
     
     # init command
     init_parser = subparsers.add_parser('init', help='Initialize the database')
@@ -412,6 +421,17 @@ Examples:
             
         elif args.command == 'classify':
             game = classify_game(args.game_id, db)
+        
+        elif args.command == 'auto-train':
+            from engine.rl_trainer import run_continuous_loop
+            run_continuous_loop(
+                iterations=args.iters,
+                games_per_iter=args.games,
+                sims=args.sims,
+                epochs=args.epochs,
+                keep_last_n=args.keep_n,
+                db_path=args.db_path
+            )
             
     except FileNotFoundError as e:
         logger.error(str(e))

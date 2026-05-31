@@ -227,15 +227,15 @@ if __name__ == "__main__":
         
         for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
-            
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            
+            logits, _ = model(inputs)
+            loss = criterion(logits, targets)
             loss.backward()
             optimizer.step()
             
             total_train_loss += loss.item()
-            _, predicted = outputs.max(1)
+            _, predicted = logits.max(1)
             train_total += targets.size(0)
             train_correct += predicted.eq(targets).sum().item()
             
@@ -252,12 +252,10 @@ if __name__ == "__main__":
         with torch.no_grad(): 
             for val_inputs, val_targets in val_loader:
                 val_inputs, val_targets = val_inputs.to(device), val_targets.to(device)
-                
-                val_outputs = model(val_inputs)
-                loss = criterion(val_outputs, val_targets)
-                
+                val_logits, _ = model(val_inputs)
+                loss = criterion(val_logits, val_targets)
                 total_val_loss += loss.item()
-                _, val_predicted = val_outputs.max(1)
+                _, val_predicted = val_logits.max(1)
                 val_total += val_targets.size(0)
                 val_correct += val_predicted.eq(val_targets).sum().item()
         

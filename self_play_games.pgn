@@ -1,0 +1,70 @@
+[Event "Self-Play AI Session"]
+[Site "Local Bot Environment"]
+[Date "????.??.??"]
+[Round "1"]
+[White "Bot_v1 (MCTS)"]
+[Black "Bot_v1 (MCTS)"]
+[Result "1-0"]
+
+1. f3 d6 2. Kf2 Nd7 3. e3 g6 4. Bc4 Rb8 5. Qe1 b6 6. f4 f6 7. Qe2 c6 8. c3 Ba6 9. Bxg8 g5 10. Qh5# 1-0
+
+[Event "Self-Play AI Session"]
+[Site "Local Bot Environment"]
+[Date "????.??.??"]
+[Round "2"]
+[White "Bot_v1 (MCTS)"]
+[Black "Bot_v1 (MCTS)"]
+[Result "0-1"]
+
+1. Nh3 b6 2. e4 d6 3. Be2 h6 4. f3 Bf5 5. Kf2 c5 6. Bd3 a6 7. Qe2 e5 8. Qe3 Rh7 9. Nf4 Ne7 10. Ne6 Qc8 11. Nxf8 Qe6 12. Nd7 Kxd7 13. Qd4 Nbc6 14. Qxe5 c4 15. Be2 Rg8 16. Qb5 Rgh8 17. Kg3 Rg8 18. Kf4 Rgh8 19. Qxb6 Ne5 20. Qd4 Rg8 21. Qb6 Rf8 22. Qb3 Rg8 23. Qb8 Rf8 24. Qb6 Rd8 25. Qb7+ Ke8 26. Qa7 Kf8 27. Bf1 Rh8 28. Qb7 Re8 29. Qa8 Rg8 30. Qxe8+ Kxe8 31. Kg3 Kd8 32. Kh4 Bg4 33. b3 c3 34. Bxa6 Rf8 35. Bc8 Rh8 36. Bb7 Rg8 37. Ba6 Rf8 38. Bc8 Rh8 39. Bb7 Rg8 40. Ba6 Rf8 41. Bc8 Rh8 42. Bb7 Rg8 43. Ba6 Rf8 44. Bc8 Rh8 45. Bb7 Rg8 46. Rf1 Kc7 47. Bc8 Kd8 48. Bd7 Rf8 49. Be8 Rh8 50. f4 Rh7 51. Bxf7 Kd7 52. Bg6 Be2 53. Rg1 Qg4# 0-1
+
+[Event "Self-Play AI Session"]
+[Site "Local Bot Environment"]
+[Date "????.??.??"]
+[Round "3"]
+[White "Bot_v1 (MCTS)"]
+[Black "Bot_v1 (MCTS)"]
+[Result "1-0"]
+
+1. Nh3 d6 2. Na3 d5 3. f3 Qd7 4. d3 g6 5. Qd2 e6 6. c4 d4 7. g3 Bxa3 8. Rg1 Qd6 9. Ng5 Kd8 10. Nxh7 Bd7 11. Nf6 Nh6 12. Ne8 Bxe8 13. Qf4 a6 14. Qe4 Rh7 15. Qxb7 Bd7 16. Qxa8 Ke8 17. Qb7 Kf8 18. Qa8 Kg8 19. Qa7 Kh8 20. Qa8 Kg8 21. Qa7 Kh8 22. Qa8 Kg8 23. Qa7 Kh8 24. Qa8 Kg8 25. Qa7 Kh8 26. Qa8 Kg7 27. Qb7 Nc6 28. Qc8 Rh8 29. Qa8 Re8 30. Kf2 Kh8 31. Be3 Rg8 32. b3 Rf8 33. Bh3 Kg8 34. Qd8 Kh8 35. Qg5 Rg8 36. Qxh6# 1-0
+
+[Event "Self-Play AI Session"]
+[Site "Local Bot Environment"]
+[Date "????.??.??"]
+[Round "4"]
+[White "Bot_v1 (MCTS)"]
+[Black "Bot_v1 (MCTS)"]
+[Result "1-0"]
+
+1. c3 Nh6 2. d3 b6 3. Qb3 Ng8 4. e4 g6 5. Qa3 Nc6 6. Qa5 e5 7. Nd2 d6 8. a4 Nge7 9. Qxa7 Rg8 10. Qxb6 Qd7 11. Qxc7 Rh8 12. Nc4 Rg8 13. Nb6 Rg7 14. Nxc8 Rb8 15. Na7 Rd8 16. Nb5 Rc8 17. Nf3 Rd8 18. Nh4 Rc8 19. Nxg6 Rd8 20. Nxf8 Ra8 21. Ra3 Ra7 22. Nxa7 Qg4 23. Nxh7 Rg8 24. Ng5 Rh8 25. Qb7 Rg8 26. Qa6 Rf8 27. Qb7 Rh8 28. Qa8+ Nd8 29. Qb8 Rh7 30. Qa8 Kd7 31. Qb8 Nb7 32. Qa8 Rh4 33. Qb8 Ng8 34. Qc8+ Ke7 35. Qxg8 Kd7 36. Qh8 Qh3 37. Qf8 Rh8 38. Qxh8 Ke7 39. Nxf7 Kxf7 40. Qc8 Kg7 41. Rg1 Qh8 42. Qb8 Qg8 43. Rb3 Qh8 44. Rb6 Nd8 45. Qc8 Qh7 46. Rh1 Nf7 47. Rxd6 Qh8 48. Qe8 Qxh2 49. Rxh2 Nh8 50. Qg8+ Kxg8 51. Nc8 Kg7 52. Be3 Nf7 53. g3 Nxd6 54. Bb6 Nc4 55. Na7 Ne3 56. Nc8 Nc4 57. Na7 Ne3 58. Nc8 Nc4 59. Na7 Ne3 60. Nc8 Nc4 61. Na7 Ne3 62. Nc8 Nf5 63. Ba7 Nxg3 64. Ne7 Kf7 65. Nc8 Kg7 66. Ne7 Kf7 67. Nc8 Kg7 68. Ne7 Kf7 69. Nc8 Kg7 70. Ne7 Kf7 71. Nc8 Kg6 72. Nd6 Kg5 73. Bb6 Kg4 74. Bc7 Kf4 75. Bb8 Kf3 76. Bc7 Kf4 77. Bb8 Kf3 78. Bc7 Kf4 79. Bb8 Kf3 80. Bc7 Kf4 81. Bb8 Kf3 82. Bc7 Ne2 83. Rh6 Nxc3 84. Bb8 Nxa4 85. Be2+ Kg2 86. Ba7 Kg1 87. Rh5 Nc5 88. Ne8 Nd7 89. Rh3 Nc5 90. Nf6 Nb7 91. Rf3 Nd8 92. Rg3+ Kh2 93. Ng4+ Kh1 94. Bf3# 1-0
+
+[Event "Self-Play AI Session"]
+[Site "Local Bot Environment"]
+[Date "????.??.??"]
+[Round "5"]
+[White "Bot_v1 (MCTS)"]
+[Black "Bot_v1 (MCTS)"]
+[Result "1/2-1/2"]
+
+1. e3 a6 2. Qg4 a5 3. f4 d6 4. Qg3 e5 5. c3 Be7 6. Qxg7 Bf5 7. d3 Bxd3 8. e4 Nh6 9. Qxh7 Nd7 10. a3 Nb8 11. a4 Rxh7 12. Nh3 Kd7 13. Ng5 Ra7 14. Nxh7 Bf6 15. Bxd3 Qe8 16. Ng5 Qf8 17. Ne6 Qe8 18. O-O Qc8 19. Ng7 c5 20. Nf5 Na6 21. Nxd6 Qg8 22. Ne8 Qf8 23. Ng7 Qd8 24. Ne8 Qxe8 25. Bxa6 Qd8 26. Bd2 Qb8 27. Bxb7 Qg8 28. Kf2 Ke7 29. Ba8 Qe8 30. Bc6 Kf8 31. Bxe8 Ke7 32. Bxf7 Kf8 33. Bg8 Kg7 34. Bb3 Kh7 35. Be6 Rg7 36. Bg4 Kg6 37. Bd1 Rg8 38. Kg3 Ra8 39. Kh3 Kh7 40. Bb3 Rc8 41. f5 Rc6 42. Kg3 Kg7 43. Bg8 c4 44. Bf7 Bd8 45. Bg8 Rc8 46. Bh7 Be7 47. Bg6 Rh8 48. Bh7 Rb8 49. Bg8 Kh8 50. Bxc4 Kh7 51. Be6 Bd8 52. Bc8 Ra8 53. Bb7 Ra7 54. Ba8 Kh8 55. Bb7 Kh7 56. Ba8 Kh8 57. Bb7 Kh7 58. Ba8 Kh8 59. Bb7 Kh7 60. Ba8 Kh8 61. Bb7 Kg7 62. Bc8 Ra8 63. Bd7 Rc8 64. Bxc8 Kh7 65. Bb7 Kg7 66. Bc8 Kh7 67. Bb7 Kg7 68. Bc8 Kh7 69. Bb7 Kg7 70. Bc8 Kh7 71. Bb7 Kg7 72. Ba8 Bf6 73. Bb7 Kg8 74. Bc8 Kg7 75. b3 Bd8 76. Bd7 Bc7 77. Be8 Ng8 78. Bf7 Nh6 79. Bg6 Bd6 80. Be8 Kh7 81. Rf4 Ng4 82. Bb5 Ne3 83. Na3 Kh8 84. Ba6 Bxa3 85. Bc8 Nd1 86. f6 Kg8 87. Bd7 Kf7 88. Bc8 Ke8 89. Bb7 Bb2 90. Bc8 Bxa1 91. Rh4 Ne3 92. Rg4 Nxg2 93. Bb7 Kf8 94. Bc8 Ke8 95. Bb7 Kf8 96. Bc8 Ke8 97. Bb7 Kf8 98. Bc8 Ke8 99. Bb7 Kf8 100. Bc8 Ne1 1/2-1/2
+
+[Event "Self-Play AI Session"]
+[Site "Local Bot Environment"]
+[Date "????.??.??"]
+[Round "6"]
+[White "Bot_v1 (MCTS)"]
+[Black "Bot_v1 (MCTS)"]
+[Result "1/2-1/2"]
+
+1. Nc3 Na6 2. Nd5 e6 3. Ne7 g5 4. d3 Nb8 5. g3 Kxe7 6. Bd2 b6 7. Be3 d6 8. f4 a5 9. Qd2 e5 10. Qxa5 bxa5 11. Bc1 Nh6 12. c4 Ba6 13. h4 Bxc4 14. Kd1 Bxd3 15. exd3 Ng4 16. Ke1 exf4 17. Be2 c5 18. h5 Bg7 19. Rh4 Bxb2 20. Bf1 Ne5 21. Rxf4 Qg8 22. Ne2 Bxa1 23. Rf6 Qf8 24. Ng1 Qe8 25. Be2 Bd4 26. Rxd6 Kf8 27. Rc6 h6 28. Rb6 Qe6 29. Rxe6 f6 30. Rxe5 Bc3+ 31. Kd1 Nc6 32. Rxc5 Ne5 33. Rxe5 Kf7 34. Re4 Rhd8 35. Bf1 Bd2 36. Be2 Rd5 37. Bf1 Rxd3 38. Be2 Rb8 39. a4 Rbd8 40. Re8 Rc3 41. Rxd8 Be3 42. Bb5 Rc2 43. Rg8 Ke7 44. Ne2 Rxc1+ 45. Nxc1 Bb6 46. Na2 Kf7 47. Ke1 Bg1 48. Be2 Ke7 49. Ba6 Be3 50. Bb5 Bf4 51. Rg7+ Kd8 52. Be2 Bxg3+ 53. Kd1 Ke8 54. Bb5+ Kf8 55. Be2 Ke8 56. Bb5+ Kf8 57. Be2 Ke8 58. Bb5+ Kf8 59. Be2 Ke8 60. Bb5+ Kf8 61. Be2 Ke8 1/2-1/2
+
+[Event "Self-Play AI Session"]
+[Site "Local Bot Environment"]
+[Date "????.??.??"]
+[Round "7"]
+[White "Bot_v1 (MCTS)"]
+[Black "Bot_v1 (MCTS)"]
+[Result "0-1"]
+
+1. d4 g5 2. b4 f6 3. Bb2 h6 4. g3 a6 5. Ba3 Bg7 6. d5 f5 7. h3 h5 8. Bg2 Rh7 9. Nc3 Nh6 10. Qd3 Bxc3+ 11. Qd2 Kf7 12. Bc1 Bxd2+ 13. Kd1 c6 14. a4 Qg8 15. Bf1 Rh8 16. Ra2 Be3 17. Ke1 Bd2+ 18. Bxd2 c5 19. h4 Ng4 20. Bc1 Ra7 21. a5 Nxf2 22. c3 Ng4 23. c4 f4 24. Nh3 e5 25. Rg1 Qh7 26. bxc5 Qb1 27. Nxg5+ Kg8 28. Rc2 fxg3 29. Ne6 g2 30. Nc7 Qxc2 31. Bb2 gxf1=B 32. Rxg4+ Kh7 33. Rg8 Qxe2# 0-1
+
