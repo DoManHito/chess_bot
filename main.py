@@ -286,15 +286,14 @@ Examples:
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-    rl_parser = subparsers.add_parser('auto-train', help='Запустить зацикленный процесс Self-Play и обучения')
-    rl_parser = subparsers.add_parser('auto-train', help='Запустить зацикленный процесс Self-Play и обучения')
-    rl_parser.add_argument('--iters', type=int, default=10, help='Количество глобальных итераций цикла (по умолчанию: 10)')
-    rl_parser.add_argument('--games', type=int, default=20, help='Партий генерируется за 1 итерацию (по умолчанию: 20)')
-    rl_parser.add_argument('--sims', type=int, default=60, help='Симуляций MCTS на каждый ход (по умолчанию: 60)')
-    rl_parser.add_argument('--epochs', type=int, default=5, help='Эпох обучения нейросети за 1 итерацию (по умолчанию: 5)')
-    rl_parser.add_argument('--keep-n', type=int, default=100, help='Сколько последних партий хранить в базе (по умолчанию: 100)')
-    rl_parser.add_argument('--db-path', default='chess_bot.db', help='Путь к БД (по умолчанию: chess_bot.db)')
-    rl_parser.add_argument('--workers', type=int, default=1, help='Количество процессов для параллельной генерации партий (по умолчанию: 1)')
+    rl_parser = subparsers.add_parser('auto-train', help='Run continuous Self-Play and training loop')
+    rl_parser.add_argument('--iters', type=int, default=10, help='Number of global iterations per cycle (default: 10)')
+    rl_parser.add_argument('--games', type=int, default=20, help='Number of games generated per iteration (default: 20)')
+    rl_parser.add_argument('--sims', type=int, default=60, help='Number of MCTS simulations per move (default: 60)')
+    rl_parser.add_argument('--epochs', type=int, default=5, help='Number of neural network training epochs per iteration (default: 5)')
+    rl_parser.add_argument('--keep-n', type=int, default=100, help='Number of last games to keep in database (default: 100)')
+    rl_parser.add_argument('--db-path', default='chess_bot.db', help='Path to database (default: chess_bot.db)')
+    rl_parser.add_argument('--workers', type=int, default=1, help='Number of processes for parallel game generation (default: 1)')
     
     init_parser = subparsers.add_parser('init', help='Initialize the database')
     init_parser.add_argument(

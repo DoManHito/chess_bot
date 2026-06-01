@@ -84,7 +84,6 @@ class MoveClassifierMCTS:
         exp_scores = np.exp(raw_scores - np.max(raw_scores))
         probabilities = exp_scores / exp_scores.sum()
 
-        # Добавляем шум Дирихле на корневом узле для разведки (exploration)
         if node.parent is None:
             dirichlet_alpha = 0.03
             noise = np.random.dirichlet([dirichlet_alpha] * len(legal_moves))

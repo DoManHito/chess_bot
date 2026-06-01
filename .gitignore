@@ -222,3 +222,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+stockfish-ubuntu-x86-64-avx2

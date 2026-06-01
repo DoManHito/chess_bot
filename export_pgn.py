@@ -18,7 +18,7 @@ def export_self_play_to_pgn(output_filename="self_play_games.pgn"):
 
     pgn_file = open(output_filename, "w", encoding="utf-8")
     
-    print(f"Экспорт {len(game_ids)} партий в файл {output_filename}...")
+    print(f"Exporting {len(game_ids)} games to file {output_filename}...")
     
     for game_id in game_ids:
         cursor.execute("""
@@ -66,7 +66,7 @@ def export_self_play_to_pgn(output_filename="self_play_games.pgn"):
         
     pgn_file.close()
     conn.close()
-    print("Готово! Можешь загрузить файл на lichess.org/paste")
+    print("Done! You can upload the file to lichess.org/paste")
 
 if __name__ == "__main__":
     export_self_play_to_pgn()

@@ -132,41 +132,41 @@ def play_one_game_parallel(game_id, bot_weights, num_simulations, temperature, d
 def run_self_play_session(num_games: int, num_simulations: int, temperature: float,
                           db_path: str, bot_weights: str, num_workers: int):
     print(f"\n----------------------------------------")
-    print(f"🎮 ФАЗА 1: ГЕНЕРАЦИЯ ПАРТИЙ SELF-PLAY ({num_games} игр)")
+    print(f"🎮 PHASE 1: SELF-PLAY GAME GENERATION ({num_games} games)")
     print(f"----------------------------------------")
-    print(f"🚀 Запуск {num_workers} процессов для генерации {num_games} партий...")
+    print(f"🚀 Starting {num_workers} processes to generate {num_games} games...")
 
     start_game_id = get_next_game_id(db_path)
     game_ids = list(range(start_game_id, start_game_id + num_games))
 
     if num_workers <= 1:
-        for gid in tqdm(game_ids, desc="Синхронная генерация"):
+        for gid in tqdm(game_ids, desc="Synchronous generation"):
             play_one_game_parallel(gid, bot_weights, num_simulations, temperature, db_path)
     else:
         worker_func = partial(play_one_game_parallel, bot_weights=bot_weights,
                               num_simulations=num_simulations, temperature=temperature, db_path=db_path)
         with mp.Pool(processes=num_workers) as pool:
-            list(tqdm(pool.imap_unordered(worker_func, game_ids), total=num_games, desc="Генерация партий"))
+            list(tqdm(pool.imap_unordered(worker_func, game_ids), total=num_games, desc="Game generation"))
 
-    print(f"✅ Все {num_games} партий сгенерированы и сохранены.")
+    print(f"✅ All {num_games} games generated and saved.")
 
 
 def train_rl_iteration(epochs: int, batch_size: int, lr: float, alpha: float, db_path: str):
     print("\n" + "-"*40)
-    print("🧠 ФАЗА 2: ОБУЧЕНИЕ НЕЙРОСЕТИ БОТА (RL Update)")
+    print("🧠 PHASE 2: BOT NEURAL NETWORK TRAINING (RL Update)")
     print("-"*40)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"📡 ЦЕЛЕВОЙ ДЕВАЙС ДЛЯ ФАЗЫ ОБУЧЕНИЯ: {device}")
+    print(f"📡 TARGET DEVICE FOR TRAINING PHASE: {device}")
     if device.type == "cuda":
-        print(f"🔥 Обучение ускорено на GPU: {torch.cuda.get_device_name(0)}")
+        print(f"🔥 Training accelerated on GPU: {torch.cuda.get_device_name(0)}")
         torch.cuda.empty_cache()
     print("-" * 40)
 
     dataset = ChessSelfPlayDataset(db_path=db_path)
     
     if len(dataset) < 50:
-        print("⚠️ Слишком мало данных для обучения. Пропускаем...")
+        print("⚠️ Too little data for training. Skipping...")
         return
 
     train_size = int(0.9 * len(dataset))
@@ -198,7 +198,7 @@ def train_rl_iteration(epochs: int, batch_size: int, lr: float, alpha: float, db
         model.train()
         total_loss = 0
         
-        progress_bar = tqdm(train_loader, desc=f"   Эпоха {epoch+1}/{epochs}", leave=True)
+        progress_bar = tqdm(train_loader, desc=f"   Epoch {epoch+1}/{epochs}", leave=True)
         for inputs, class_targets, value_targets in progress_bar:
             inputs = inputs.to(device, non_blocking=True)
             class_targets = class_targets.to(device, non_blocking=True)
@@ -218,7 +218,7 @@ def train_rl_iteration(epochs: int, batch_size: int, lr: float, alpha: float, db
             progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
 
     torch.save(model.state_dict(), weights_path)
-    print(f"✅ Веса БОТА успешно обновлены и сохранены в {weights_path}")
+    print(f"✅ BOT weights successfully updated and saved to {weights_path}")
 
 
 def apply_sliding_window(db_path: str, keep_last_n_games: int):
@@ -233,7 +233,7 @@ def apply_sliding_window(db_path: str, keep_last_n_games: int):
         deleted_rows = cursor.rowcount
         conn.commit()
         if deleted_rows > 0:
-            print(f"🧹 Sliding Window: Удалено {deleted_rows} старых позиций (сохраняем топ-{keep_last_n_games} игр).")
+            print(f"🧹 Sliding Window: Deleted {deleted_rows} old positions (keeping top-{keep_last_n_games} games).")
     conn.close()
 
 
@@ -241,7 +241,7 @@ def run_continuous_loop(iterations: int, games_per_iter: int, sims: int, epochs:
                         keep_last_n: int, db_path: str, temperature: float = 1.2,
                         num_workers: int = 1):
     init_self_play_db(db_path)
-    print(f"\n🚀 ЗАПУСК ЦИКЛА ОБУЧЕНИЯ НА {iterations} ИТЕРАЦИЙ (workers={num_workers})")
+    print(f"\n🚀 STARTING TRAINING LOOP FOR {iterations} ITERATIONS (workers={num_workers})")
     
     classifier_weights = "models/weights_classifier.pth"
     bot_weights = "models/weights_bot.pth"
@@ -249,19 +249,19 @@ def run_continuous_loop(iterations: int, games_per_iter: int, sims: int, epochs:
     if not os.path.exists(bot_weights):
         if os.path.exists(classifier_weights):
             shutil.copy(classifier_weights, bot_weights)
-            print(f"📦 Базовые веса скопированы из {classifier_weights} в {bot_weights}")
+            print(f"📦 Base weights copied from {classifier_weights} to {bot_weights}")
         else:
-            print(f"⚠️ Внимание: {bot_weights} не найден. Обучение начнется с нуля!")
+            print(f"⚠️ Warning: {bot_weights} not found. Training will start from scratch!")
 
     for i in range(iterations):
-        print(f"\n{'='*50}\n🌟 ГЛОБАЛЬНАЯ ИТЕРАЦИЯ {i+1}/{iterations}\n{'='*50}")
+        print(f"\n{'='*50}\n🌟 GLOBAL ITERATION {i+1}/{iterations}\n{'='*50}")
         
         run_self_play_session(num_games=games_per_iter, num_simulations=sims,
                               temperature=temperature, db_path=db_path,
                               bot_weights=bot_weights, num_workers=num_workers)
         
-        # 2. Обучаем сеть на GPU (Мгновенное чтение данных без вызова нейросетей внутри даталоадера!)
+        # 2. Train network on GPU (Instant data reading without calling neural networks inside dataloader!)
         train_rl_iteration(epochs=epochs, batch_size=64, lr=1e-4, alpha=1.0, db_path=db_path)
         
-        # 3. Скользящее окно
+        # 3. Sliding window
         apply_sliding_window(db_path, keep_last_n)

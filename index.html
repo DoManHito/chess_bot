@@ -1,20 +1,21 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Шахматный ИИ с оценкой ходов</title>
+    <title>Neural Network vs Engine</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
     <style>
-        body { display: flex; flex-direction: column; align-items: center; font-family: Arial, sans-serif; background: #222; color: #fff; margin-top: 40px;}
-        #myBoard { width: 450px; margin: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
-        #status { font-size: 18px; margin-top: 10px; text-align: center; line-height: 1.6; max-width: 500px;}
+        body { display: flex; flex-direction: column; align-items: center; font-family: Arial, sans-serif; background: #1e1e1e; color: #fff; margin-top: 30px;}
+        #myBoard { width: 450px; margin: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.6); }
+        #status { font-size: 16px; margin-top: 10px; text-align: center; line-height: 1.8; max-width: 600px; background: #2d2d2d; padding: 15px; border-radius: 8px;}
+        .badge { padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 14px; }
     </style>
 </head>
 <body>
 
-    <h2>Шахматный Бот (MCTS + Классификатор ходов)</h2>
+    <h2>Move Analysis Comparison</h2>
     <div id="myBoard"></div>
-    <div id="status">Ваш ход (Белые). Сделайте ход, чтобы активировать оценку ИИ!</div>
+    <div id="status"><b>Your turn (White).</b> Make your first move to start!</div>
 
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
@@ -25,85 +26,76 @@
         var game = new Chess();
         var $status = $('#status');
 
-        // Вспомогательная функция для подбора цветов оценок (стиль Chess.com)
-        function getColorForClass(moveClass) {
+        function getStyleForClass(moveClass) {
+            let color = "#fff";
             switch(moveClass) {
-                case "Best": return "#00E676";       // Ярко-зеленый
-                case "Excellent": return "#4CAF50";  // Зеленый
-                case "Good": return "#8BC34A";       // Салатовый
-                case "Inaccuracy": return "#FFC107"; // Желтый
-                case "Mistake": return "#FF9800";    // Оранжевый
-                case "Blunder": return "#F44336";    // Красный
-                default: return "#fff";
+                case "Best": color = "#00E676"; break;
+                case "Excellent": color = "#4CAF50"; break;
+                case "Good": color = "#8BC34A"; break;
+                case "Inaccuracy": color = "#FFC107"; break;
+                case "Mistake": color = "#FF9800"; break;
+                case "Blunder": color = "#F44336"; break;
             }
+            return 'style="color: ' + color + '; font-weight: bold;"';
+        }
+
+        function formatFeedback(movePrefix, san, nnClass, idealClass) {
+            return movePrefix + " <b>" + san + "</b><br>" +
+                   "🧠 Network: <span " + getStyleForClass(nnClass) + ">" + nnClass + "</span> | " +
+                   "🤖 Ideal (SF): <span " + getStyleForClass(idealClass) + ">" + idealClass + "</span>";
         }
 
         function makeBotMove(playerFeedbackHtml) {
             if (game.game_over()) return;
 
-            $status.html(playerFeedbackHtml + "<br><span style='color: #aaa;'>Бот рассчитывает варианты...</span>");
+            $status.html(playerFeedbackHtml + "<br><span style='color: #aaa;'>Bot is thinking...</span>");
 
-            // Запрашиваем ход у ИИ (800 симуляций для глубины)
             $.get('http://127.0.0.1:8000/get_move', { fen: game.fen(), simulations: 800 }, function(data) {
                 if (data.error) {
-                    $status.html('Ошибка сервера: ' + data.error);
+                    $status.html('Error: ' + data.error);
                     return;
                 }
 
-                // Выполняем ход бота на доске
                 game.move({ uci: true, from: data.move_uci.substring(0, 2), to: data.move_uci.substring(2, 4) });
                 board.position(game.fen());
                 
-                // 1. Проверяем, не поставил ли бот МАТ игроку
                 if (game.in_checkmate()) {
-                    $status.html(playerFeedbackHtml + "<br><b style='color: #F44336;'>МАТ! Бот победил. 🤖💀</b>");
+                    $status.html(playerFeedbackHtml + "<br><b style='color: #F44336;'>CHECKMATE! Bot won. 🤖💀</b>");
                     return;
                 } else if (game.game_over()) {
-                    $status.html(playerFeedbackHtml + "<br><b>Игра завершилась ничьей! 🤝</b>");
+                    $status.html(playerFeedbackHtml + "<br><b>Draw! 🤝</b>");
                     return;
                 }
 
-                // Если игра продолжается, выводим вердикт по обоим ходам
-                let botColor = getColorForClass(data.bot_move_class);
-                let botFeedbackHtml = "Бот ответил: <b>" + data.move_san + "</b> (<span style='color:" + botColor + "; font-weight:bold;'>" + data.bot_move_class + "</span>)";
-                
-                $status.html(playerFeedbackHtml + "<br>" + botFeedbackHtml + "<br><br><b>Ваш ход!</b>");
+                let botFeedbackHtml = formatFeedback("Bot responded:", data.move_san, data.bot_nn_class, data.bot_ideal_class);
+                $status.html(playerFeedbackHtml + "<hr style='border-color:#444;'>" + botFeedbackHtml + "<br><br><b>Your turn!</b>");
             });
         }
 
         function onDragStart(source, piece, position, orientation) {
-            // Запрещаем ходить, если игра окончена или сейчас ход черных (бота)
             if (game.game_over() || game.turn() === 'b') return false;
         }
 
         function onDrop(source, target) {
-            var fenBeforeMove = game.fen(); // Запоминаем позицию ДО вашего хода для анализа
-
-            // Пытаемся сделать ход во внутренней логике chess.js
+            var fenBeforeMove = game.fen();
             var move = game.move({ from: source, to: target, promotion: 'q' });
             
-            // Если ход нелегальный, возвращаем фигуру назад
             if (move === null) return 'snapback';
-            
-            board.position(game.fen()); // Обновляем графическую доску
+            board.position(game.fen());
 
-            // 2. Проверяем, не поставил ли игрок МАТ боту
             if (game.in_checkmate()) {
-                $status.html("<b style='color: #00E676;'>ШАХ И МАТ! Вы победили бота! 🎉🏆</b>");
+                $status.html("<b style='color: #00E676;'>CHECKMATE! You won! 🎉🏆</b>");
                 return;
             } else if (game.game_over()) {
-                $status.html("<b>Игра окончена (Ничья/Пат)! 🤝</b>");
+                $status.html("<b>Game ended in a draw! 🤝</b>");
                 return;
             }
 
-            // Отправляем ход игрока на бэкенд-анализ
-            $status.html("<span style='color: #aaa;'>Нейросеть оценивает ваш ход...</span>");
+            $status.html("<span style='color: #aaa;'>Double analysis of your move by engine and network...</span>");
             
             $.get('http://127.0.0.1:8000/analyze_move', { fen: fenBeforeMove, move_san: move.san }, function(data) {
-                let playerColor = getColorForClass(data.move_class);
-                let playerFeedbackHtml = "Вы сыграли: <b>" + move.san + "</b> (<span style='color:" + playerColor + "; font-weight:bold;'>" + data.move_class + "</span>).";
+                let playerFeedbackHtml = formatFeedback("You played:", move.san, data.nn_class, data.ideal_class);
                 
-                // Передаем оценку вашего хода в функцию бота, чтобы склеить логи на экране
                 window.setTimeout(function() {
                     makeBotMove(playerFeedbackHtml);
                 }, 200);
