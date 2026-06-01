@@ -36,6 +36,7 @@ class MoveClassification:
     move_san: str
     classification: str
     evaluation: float
+    evaluation_change: float
     created_at: str
 
 
@@ -353,6 +354,8 @@ class ChessDatabase:
                 fen_after=row["fen_after"],
                 move_san=row["move_san"],
                 classification=row["classification"],
+                evaluation=row["evaluation"],
+                evaluation_change=row["evaluation_change"],
                 created_at=row["created_at"]
             )
             for row in rows

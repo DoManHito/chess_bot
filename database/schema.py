@@ -45,6 +45,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
             move_san TEXT,
             classification TEXT,
             evaluation REAL,
+            evaluation_change REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
         )
