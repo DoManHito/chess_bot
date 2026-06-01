@@ -1,35 +1,18 @@
 import sqlite3
 import json
-import os
 import torch
 from torch.utils.data import Dataset
 import chess
 import numpy as np
-
-from classifiers.move_classifier import MoveClassifier
 from classifiers.classification_config import CLASS_NAMES
 
 class ChessSelfPlayDataset(Dataset):
-    def __init__(self, db_path="chess_bot.db", device=None):
+    def __init__(self, db_path="chess_bot.db"):
         self.db_path = db_path
         self.samples = []
         
-        self.weights_path = "models/weights_classifier.pth"
-        if not os.path.exists(self.weights_path):
-            print(f"⚠️ Предупреждение: Файл {self.weights_path} не найден!")
-            
-        # Ограничиваем внутренние потоки PyTorch, чтобы DataLoader не зависал
+        # Ограничиваем внутренние потоки PyTorch для стабильности даталоадера
         torch.set_num_threads(1)
-
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = device
-
-        if self.device == "cpu":
-            torch.set_num_threads(1)
-        
-        self.classifier_utils = MoveClassifier(weights_path=self.weights_path, device=device)
-        self.classifier_utils.model.eval()  # Гарантируем режим валидации
         self._load_data()
 
     def _load_data(self):
@@ -50,7 +33,7 @@ class ChessSelfPlayDataset(Dataset):
             self.samples.append({
                 "fen": fen_before,
                 "move_uci": move_uci,
-                "policy_dict": json.loads(mcts_policy_json),
+                "policy_dict": json.loads(mcts_policy_json), # Теперь тут лежат готовые вероятности КЛАССОВ
                 "value": float(result_value)
             })
         print(f"Успешно загружено {len(self.samples)} состояний для обучения.")
@@ -58,15 +41,39 @@ class ChessSelfPlayDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
+    # Статический метод конвертации доски в тензор (вынесен из MoveClassifier для автономности)
+    def _board_to_tensor_static(self, board_before: chess.Board, board_after: chess.Board) -> torch.Tensor:
+        tensor = np.zeros((25, 8, 8), dtype=np.float32)
+        
+        # Слои 0-11: Фигуры доски ДО хода
+        pieces = [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING]
+        for i, piece in enumerate(pieces):
+            for sq in board_before.pieces(piece, chess.WHITE):
+                tensor[i, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+            for sq in board_before.pieces(piece, chess.BLACK):
+                tensor[i + 6, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+                
+        # Слои 12-23: Фигуры доски ПОСЛЕ хода
+        for i, piece in enumerate(pieces):
+            for sq in board_after.pieces(piece, chess.WHITE):
+                tensor[i + 12, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+            for sq in board_after.pieces(piece, chess.BLACK):
+                tensor[i + 18, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+                
+        # Слой 24: Чей ход ДО (Белые=1, Черные=0)
+        if board_before.turn == chess.WHITE:
+            tensor[24, :, :] = 1.0
+            
+        return torch.from_numpy(tensor)
+
     def __getitem__(self, idx):
-        # Защита внутренних воркеров DataLoader от взаимной блокировки потоков CPU
-        if self.device == "cpu":
-            torch.set_num_threads(1)
+        torch.set_num_threads(1)
         
         sample = self.samples[idx]
         board = chess.Board(sample["fen"])
         value_target = torch.tensor(sample["value"], dtype=torch.float32)
         
+        # Находим состояние доски после сделанного хода
         board_after = board.copy()
         try:
             move = chess.Move.from_uci(sample["move_uci"])
@@ -75,39 +82,19 @@ class ChessSelfPlayDataset(Dataset):
         except Exception:
             pass
             
-        input_tensor = self.classifier_utils._board_to_tensor_static(board, board_after).squeeze(0)
+        # Генерируем входной тензор позиций
+        input_tensor = self._board_to_tensor_static(board, board_after)
     
+        # Извлекаем уже ГОТОВОЕ распределение классов из словаря политики
         policy_dict = sample["policy_dict"]
         class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
 
-        if not policy_dict:
-            class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
-            return input_tensor, torch.tensor(class_target_distribution, dtype=torch.float32), value_target
-        
-        moves_uci_list = list(policy_dict.keys())
-        mcts_probs = list(policy_dict.values())
+        for i, class_name in enumerate(CLASS_NAMES):
+            class_target_distribution[i] = policy_dict.get(class_name, 0.0)
 
-        moves_san = []
-        valid_indices = []
-
-        for i, mu in enumerate(moves_uci_list):
-            try:
-                m_obj = chess.Move.from_uci(mu)
-                moves_san.append(board.san(m_obj))
-                valid_indices.append(i)
-            except Exception:
-                class_target_distribution[0] += mcts_probs[i]  # Дефолт в Best
-
-        if moves_san:
-            classes, _, _ = self.classifier_utils.classify_moves_batch(board, moves_san)
-            for cls, i in zip(classes, valid_indices):
-                c_idx = CLASS_NAMES.index(cls) if cls in CLASS_NAMES else 0
-                class_target_distribution[c_idx] += mcts_probs[i]
-                
+        # Резервная нормализация, если данных почему-то нет
         sum_dist = class_target_distribution.sum()
-        if sum_dist > 0:
-            class_target_distribution /= sum_dist
-        else:
+        if sum_dist <= 0:
             class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
 
         return input_tensor, torch.tensor(class_target_distribution, dtype=torch.float32), value_target
