@@ -9,12 +9,10 @@ def export_self_play_to_pgn(output_filename="self_play_games.pgn"):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Проверяем, есть ли вообще данные
     cursor.execute("SELECT DISTINCT game_id FROM self_play_moves")
     game_ids = [row[0] for row in cursor.fetchall()]
     
     if not game_ids:
-        print("В базе данных пока нет сыгранных self-play партий.")
         conn.close()
         return
 
@@ -23,11 +21,10 @@ def export_self_play_to_pgn(output_filename="self_play_games.pgn"):
     print(f"Экспорт {len(game_ids)} партий в файл {output_filename}...")
     
     for game_id in game_ids:
-        # Вытаскиваем все ходы конкретной игры по порядку их генерации
         cursor.execute("""
-            SELECT fen_before, move_uci, result_value 
-            FROM self_play_moves 
-            WHERE game_id = ? 
+            SELECT fen_before, move_uci, result_value
+            FROM self_play_moves
+            WHERE game_id = ?
             ORDER BY id
         """, (game_id,))
         
@@ -35,7 +32,6 @@ def export_self_play_to_pgn(output_filename="self_play_games.pgn"):
         if not moves_data:
             continue
             
-        # Создаем PGN структуру
         game = chess.pgn.Game()
         game.headers["Event"] = f"Self-Play AI Session"
         game.headers["Site"] = "Local Bot Environment"
@@ -43,21 +39,18 @@ def export_self_play_to_pgn(output_filename="self_play_games.pgn"):
         game.headers["White"] = f"Bot_v1 (MCTS)"
         game.headers["Black"] = f"Bot_v1 (MCTS)"
         
-        # Определяем финальный результат по последнему ходу Белых/Черных
         last_move_reward = moves_data[-1][2]
-        # Так как reward привязан к ходившему, определим по FEN, чей был ход в конце
         is_white_last = " w " in moves_data[-1][0]
         
         if last_move_reward == 0:
             result_str = "1/2-1/2"
         elif (last_move_reward > 0 and is_white_last) or (last_move_reward < 0 and not is_white_last):
-            result_str = "1-0" # Выиграли Белые
+            result_str = "1-0"
         else:
-            result_str = "0-1" # Выиграли Черные
+            result_str = "0-1"
             
         game.headers["Result"] = result_str
         
-        # Заполняем дерево ходов
         node = game
         board = chess.Board()
         
@@ -67,10 +60,8 @@ def export_self_play_to_pgn(output_filename="self_play_games.pgn"):
                 node = node.add_main_variation(move)
                 board.push(move)
             else:
-                # На случай, если что-то рассинхронизировалось
                 break
                 
-        # Записываем партию в файл
         print(game, file=pgn_file, end="\n\n")
         
     pgn_file.close()

@@ -5,7 +5,6 @@ SQL schema definitions for chess database.
 import sqlite3
 from typing import Optional
 
-# Database path constant
 DB_PATH = "chess_bot.db"
 
 

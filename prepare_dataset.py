@@ -1,4 +1,3 @@
-# prepare_dataset.py
 import sqlite3
 import chess
 from tqdm import tqdm
@@ -7,7 +6,6 @@ def add_fen_after_column(db_path="chess_bot.db"):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # 1. Check if fen_after column exists
     cursor.execute("PRAGMA table_info(moves)")
     columns = [col[1] for col in cursor.fetchall()]
     if "fen_after" not in columns:
@@ -15,7 +13,6 @@ def add_fen_after_column(db_path="chess_bot.db"):
         cursor.execute("ALTER TABLE moves ADD COLUMN fen_after TEXT")
         conn.commit()
     
-    # 2. Select moves (check for NULL and empty strings)
     print("Checking database for uncalculated FENs...")
     cursor.execute("""
         SELECT id, fen_before, move_san
@@ -32,7 +29,6 @@ def add_fen_after_column(db_path="chess_bot.db"):
     print(f"Starting fen_after calculation for {len(rows)} moves...")
     
     updates = []
-    # Using tqdm will show progress bar in console
     for row_id, fen_before, move_san in tqdm(rows):
         board = chess.Board(fen_before)
         try:
@@ -40,11 +36,10 @@ def add_fen_after_column(db_path="chess_bot.db"):
             board.push(move)
             fen_after = board.fen()
         except Exception:
-            fen_after = fen_before  # Fallback for corrupted data
+            fen_after = fen_before
             
         updates.append((fen_after, row_id))
         
-        # Batch write in chunks of 50,000
         if len(updates) >= 50000:
             cursor.executemany("UPDATE moves SET fen_after = ? WHERE id = ?", updates)
             conn.commit()

@@ -91,7 +91,6 @@ class ChessDatabase:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Check if game already exists
             cursor.execute(
                 "SELECT id FROM games WHERE "
                 "(white_player = ? AND black_player = ? AND fen_start = ? AND fen_end = ?)",

@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-Chess Bot - Main entry point with CLI interface.
-
-This module provides a command-line interface for parsing PGN files,
-classifying moves, and managing game statistics.
-"""
-
 import argparse
 import logging
 import sys
@@ -13,16 +5,12 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-# Add current directory to path for module imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Import all modules
 from parsers import PGNParser, ParsedGame
 from classifiers import MoveClassifier, MoveClassificationResult, MoveData
 from database import ChessDatabase, ParsedGame as DBParsedGame, MoveClassification
 
-
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -120,7 +108,7 @@ def parse_pgn_file(
             
             # Create game object for database
             db_game = DBParsedGame(
-                id=0,  # Will be set by database
+                id=0,
                 white_player=game.headers.get('White', 'Unknown'),
                 black_player=game.headers.get('Black', 'Unknown'),
                 fen_start=game.headers.get('FEN', DEFAULT_START_FEN),
@@ -135,7 +123,7 @@ def parse_pgn_file(
             
             # Save game and moves
             game_id = db.save_game(db_game)
-            db_game.id = game_id # Текущий ID из базы
+            db_game.id = game_id
             db.save_moves_batch(game_id, classifications)
             
             processed_games.append(db_game)
@@ -287,18 +275,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  python main.py init                    # Initialize database
-  python main.py parse games.pgn        # Parse and classify a PGN file
-  python main.py stats PlayerName       # Get player statistics
-  python main.py list                   # List all games
-  python main.py classify <game_id>     # Show classifications for a game
-  python main.py parse game1.pgn game2.pgn  # Batch process multiple files
+  python main.py init
+  python main.py parse games.pgn
+  python main.py stats PlayerName
+  python main.py list
+  python main.py classify <game_id>
+  python main.py parse game1.pgn game2.pgn
         '''
     )
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
-    # === НОВАЯ КОМАНДА ДЛЯ ЦИКЛА ОБУЧЕНИЯ ===
+    rl_parser = subparsers.add_parser('auto-train', help='Запустить зацикленный процесс Self-Play и обучения')
     rl_parser = subparsers.add_parser('auto-train', help='Запустить зацикленный процесс Self-Play и обучения')
     rl_parser.add_argument('--iters', type=int, default=10, help='Количество глобальных итераций цикла (по умолчанию: 10)')
     rl_parser.add_argument('--games', type=int, default=20, help='Партий генерируется за 1 итерацию (по умолчанию: 20)')
@@ -308,7 +296,6 @@ Examples:
     rl_parser.add_argument('--db-path', default='chess_bot.db', help='Путь к БД (по умолчанию: chess_bot.db)')
     rl_parser.add_argument('--workers', type=int, default=1, help='Количество процессов для параллельной генерации партий (по умолчанию: 1)')
     
-    # init command
     init_parser = subparsers.add_parser('init', help='Initialize the database')
     init_parser.add_argument(
         '--db-path',
@@ -316,7 +303,6 @@ Examples:
         help='Path to the database file (default: chess_bot.db)'
     )
     
-    # parse command
     parse_parser = subparsers.add_parser('parse', help='Parse and classify a PGN file')
     parse_parser.add_argument(
         'file',
@@ -334,7 +320,6 @@ Examples:
         help='Suppress progress output'
     )
     
-    # stats command
     stats_parser = subparsers.add_parser('stats', help='Get player statistics')
     stats_parser.add_argument(
         'player',
@@ -346,7 +331,6 @@ Examples:
         help='Path to the database file (default: chess_bot.db)'
     )
     
-    # list command
     list_parser = subparsers.add_parser('list', help='List all games')
     list_parser.add_argument(
         '--limit',
@@ -360,7 +344,6 @@ Examples:
         help='Path to the database file (default: chess_bot.db)'
     )
     
-    # classify command
     classify_parser = subparsers.add_parser('classify', help='Show classifications for a game')
     classify_parser.add_argument(
         'game_id',
@@ -389,16 +372,12 @@ Examples:
     # Initialize classifier
     classifier = MoveClassifier()
     
-    # Execute command
     try:
         if args.command == 'init':
-            # Already initialized above, just confirm
             logger.info("Database is already initialized")
             
         elif args.command == 'parse':
-            # Process single or multiple files
             if args.quiet:
-                # Suppress logging for quiet mode
                 old_level = logging.getLogger().level
                 logging.getLogger().setLevel(logging.WARNING)
             
@@ -442,7 +421,6 @@ Examples:
         logger.error(f"Error: {e}")
         sys.exit(1)
     
-    # Close database connection
     db.close()
     
     logger.info("Session complete")

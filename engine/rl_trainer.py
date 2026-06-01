@@ -44,24 +44,20 @@ def get_next_game_id(db_path: str) -> int:
     return (row[0] + 1) if row[0] is not None else 1
 
 
-# ----- Функция для параллельной игры одной партии (С ПРЕД-РАЗМЕТКОЙ КЛАССОВ) -----
 def play_one_game_parallel(game_id, bot_weights, num_simulations, temperature, db_path):
-    # Каждому процессу — свой чистый коннект к SQLite
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Инициализируем локальные утилиты на CPU для генерации ходов
     evaluator = MoveClassifier(weights_path=bot_weights, device="cpu")
     evaluator.model.eval()
     mcts = MoveClassifierMCTS(classifier=evaluator)
 
     board = chess.Board()
-    game_history = []  # Хранит кортежи: (fen, move_uci, mcts_policy_dict)
+    game_history = []
 
     while not board.is_game_over() and len(game_history) < 300:
         fen_before = board.fen()
         
-        # Запускаем MCTS симуляцию (возвращает visit_dict с количеством посещений)
         _, visit_dict = mcts.search(board, num_simulations=num_simulations)
         if not visit_dict:
             break
@@ -69,22 +65,17 @@ def play_one_game_parallel(game_id, bot_weights, num_simulations, temperature, d
         moves_uci_list = list(visit_dict.keys())
         mcts_visits = np.array(list(visit_dict.values()), dtype=np.float32)
 
-        # --- РЕАЛИЗАЦИЯ ТЕМПЕРАТУРЫ (EXPLORATION) ---
         if temperature > 0:
             exp_visits = mcts_visits ** (1.0 / (temperature + 1e-8))
             sum_exp = exp_visits.sum()
             move_probabilities = exp_visits / sum_exp if sum_exp > 0 else np.ones_like(exp_visits) / len(exp_visits)
             
-            # Случайно выбираем ход на основе распределения вероятностей
             chosen_move_uci = np.random.choice(moves_uci_list, p=move_probabilities)
             move = chess.Move.from_uci(chosen_move_uci)
         else:
-            # Если температура 0, выбираем строго самый посещаемый ход (жадный выбор)
             best_idx = np.argmax(mcts_visits)
             move = chess.Move.from_uci(moves_uci_list[best_idx])
 
-        # --- Размечаем классы ходов ОДИН РАЗ прямо здесь для базы данных ---
-        # Для обучения сети нам нужны нормализованные вероятности на основе сырых посещений MCTS
         total_visits = mcts_visits.sum()
         mcts_probs = mcts_visits / total_visits if total_visits > 0 else np.ones_like(mcts_visits) / len(mcts_visits)
         
@@ -117,7 +108,6 @@ def play_one_game_parallel(game_id, bot_weights, num_simulations, temperature, d
         game_history.append((fen_before, move.uci(), class_policy_dict))
         board.push(move)
 
-    # Определяем результат игры
     result = board.result()
     if result == "1-0":
         value_white = 1.0
@@ -126,9 +116,7 @@ def play_one_game_parallel(game_id, bot_weights, num_simulations, temperature, d
     else:
         value_white = 0.0
 
-    # Сохраняем всю партию в базу данных
     for fen_before, move_uci, class_policy_dict in game_history:
-        # Для кого ход?
         current_board = chess.Board(fen_before)
         actual_value = value_white if current_board.turn == chess.WHITE else -value_white
         
@@ -155,7 +143,6 @@ def run_self_play_session(num_games: int, num_simulations: int, temperature: flo
         for gid in tqdm(game_ids, desc="Синхронная генерация"):
             play_one_game_parallel(gid, bot_weights, num_simulations, temperature, db_path)
     else:
-        # Пул процессов для CPU-мультипроцессинга
         worker_func = partial(play_one_game_parallel, bot_weights=bot_weights,
                               num_simulations=num_simulations, temperature=temperature, db_path=db_path)
         with mp.Pool(processes=num_workers) as pool:
@@ -176,7 +163,6 @@ def train_rl_iteration(epochs: int, batch_size: int, lr: float, alpha: float, db
         torch.cuda.empty_cache()
     print("-" * 40)
 
-    # Инициализируем наш теперь уже ультра-легкий датасет
     dataset = ChessSelfPlayDataset(db_path=db_path)
     
     if len(dataset) < 50:
@@ -187,13 +173,11 @@ def train_rl_iteration(epochs: int, batch_size: int, lr: float, alpha: float, db
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
-    # Теперь, когда __getitem__ мгновенный, мы можем безопасно выставить num_workers=2 или 4, 
-    # не боясь зависаний или CUDA ошибок, так как внутри датасета БОЛЬШЕ НЕТ нейросетей.
     train_loader = DataLoader(
-        train_dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        num_workers=2, 
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=2,
         pin_memory=(device.type == "cuda")
     )
 
@@ -259,7 +243,6 @@ def run_continuous_loop(iterations: int, games_per_iter: int, sims: int, epochs:
     init_self_play_db(db_path)
     print(f"\n🚀 ЗАПУСК ЦИКЛА ОБУЧЕНИЯ НА {iterations} ИТЕРАЦИЙ (workers={num_workers})")
     
-    # Пути весов
     classifier_weights = "models/weights_classifier.pth"
     bot_weights = "models/weights_bot.pth"
     
@@ -273,7 +256,6 @@ def run_continuous_loop(iterations: int, games_per_iter: int, sims: int, epochs:
     for i in range(iterations):
         print(f"\n{'='*50}\n🌟 ГЛОБАЛЬНАЯ ИТЕРАЦИЯ {i+1}/{iterations}\n{'='*50}")
         
-        # 1. Генерируем партии (Классификатор вызывается ТУТ на CPU один раз в параллельных процессах)
         run_self_play_session(num_games=games_per_iter, num_simulations=sims,
                               temperature=temperature, db_path=db_path,
                               bot_weights=bot_weights, num_workers=num_workers)

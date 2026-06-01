@@ -17,7 +17,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Запуск нейросети и MCTS...")
 classifier = MoveClassifier(weights_path="models/weights_bot.pth")
 engine = MoveClassifierMCTS(classifier)
 
