@@ -1,29 +1,33 @@
-# Chess Bot - Sieciowa Analiza Ruchów Szachowych
+# Chess Bot - Neural Network Move Classifier
 
-Projekt do analizy i klasyfikacji ruchów szachowych wykorzystujący sieci neuronowe i algorytmy uczenia maszynowego. System porównuje ruchy wykonane przez sieć neuronową z idealnymi ruchami określonymi przez silnik Stockfish.
+A chess analysis system that uses neural networks and machine learning algorithms to classify and evaluate chess moves. The system compares moves made by a neural network with ideal moves determined by Stockfish.
 
-## Spis treści
+## Table of Contents
 
-- [Opis projektu](#opis-projektu)
-- [Wymagania](#wymagania)
-- [Instalacja](#instalacja)
-- [Użycie](#użycie)
-- [Struktura projektu](#struktura-projektu)
-- [Architektura](#architektura)
-- [Klasyfikacja ruchów](#klasyfikacja-ruchów)
+- [Project Description](#project-description)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [API Endpoints](#api-endpoints)
+- [CLI Commands](#cli-commands)
+- [Project Structure](#project-structure)
+- [Architecture](#architecture)
+- [Move Classification](#move-classification)
+- [Training Loop](#training-loop)
+- [Database Schema](#database-schema)
 
-## Opis projektu
+## Project Description
 
-Chess Bot to zaawansowany system do analizy partii szachowych, który:
+Chess Bot is an advanced chess analysis system that:
 
-- **Klasifikuje ruchy** jako: Best, Excellent, Good, Inaccuracy, Mistake, Blunder
-- **Ocenia pozycje** za pomocą wartości od -1 do 1
-- **Porównuje** ruchy sieci neuronowej z rekomendacjami Stockfish
-- **Generuje dane treningowe** poprzez gry self-play
-- **Posiada API REST** do interakcji z systemem
-- **Obsługuje interfejs webowy** do analizy partii
+- **Classifies moves** as: Best, Excellent, Good, Inaccuracy, Mistake, Blunder
+- **Evaluates positions** using values from -1 to 1
+- **Compares** neural network moves with Stockfish recommendations
+- **Generates training data** through self-play games
+- **Provides REST API** for system interaction
+- **Supports web interface** for game analysis
 
-## Wymagania
+## Requirements
 
 - Python 3.8+
 - PyTorch >= 2.0.0
@@ -32,100 +36,158 @@ Chess Bot to zaawansowany system do analizy partii szachowych, który:
 - FastAPI >= 0.100.0
 - Uvicorn >= 0.22.0
 - tqdm >= 4.65.0
-- Stockfish (opcjonalnie, dla porównań)
+- pandas >= 1.3.0
+- matplotlib >= 3.4.0
+- scikit-learn >= 0.24.0
+- Stockfish binary (optional, for move analysis)
 
-## Instalacja
+## Installation
 
-1. Zainstaluj zależności:
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Pobierz Stockfish (opcjonalnie):
+2. Download Stockfish (optional, for move analysis):
 ```bash
-# Pobierz z https://github.com/official-stockfish/Stockfish/releases
-# i umieść w katalogu ./stockfish-ubuntu-x86-64-avx2
+# Download from https://stockfishchess.org/download/
+# Place at ./stockfish
 ```
 
-3. Uruchom serwer:
+3. Start the server:
 ```bash
 python server.py
 ```
 
-## Użycie
+## Usage
 
 ### API Endpoints
 
-- `GET /` - Informacje o API
-- `POST /analyze` - Analiza ruchu
-- `POST /compare` - Porównanie ruchu sieci z Stockfish
+- `GET /` - API information
+- `GET /analyze_move` - Analyze a move (requires FEN and SAN)
+- `GET /get_move` - Get bot's best move (requires FEN, optional simulations count)
+
+#### `/analyze_move` Parameters
+- `fen` (string): Board position in FEN notation
+- `move_san` (string): Move in SAN notation
+
+#### `/get_move` Parameters
+- `fen` (string): Board position in FEN notation
+- `simulations` (int, default: 100): Number of MCTS simulations
+
+#### Response Example
+```json
+{
+  "move_uci": "e2e4",
+  "move_san": "e4",
+  "bot_nn_class": "Excellent",
+  "bot_ideal_class": "Best"
+}
+```
+
+### CLI Commands
+
+```bash
+# Initialize the database
+python main.py init
+
+# Parse and classify PGN files
+python main.py parse games.pgn
+
+# Get player statistics
+python main.py stats PlayerName
+
+# List all games
+python main.py list --limit 100
+
+# Show classifications for a specific game
+python main.py classify 1
+
+# Run continuous self-play and training loop
+python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5
+```
+
+#### auto-train Options
+- `--iters`: Number of global iterations per cycle (default: 10)
+- `--games`: Number of games generated per iteration (default: 20)
+- `--sims`: Number of MCTS simulations per move (default: 60)
+- `--epochs`: Number of neural network training epochs per iteration (default: 5)
+- `--keep-n`: Number of last games to keep in database (default: 100)
+- `--db-path`: Path to database (default: chess_bot.db)
+- `--workers`: Number of processes for parallel game generation (default: 1)
 
 ### Web Interface
 
-Otwórz `index.html` w przeglądarce, aby:
-- Grać szachy na desce
-- Widzieć klasyfikację swoich ruchów
-- Porównywać ruchy sieci neuronowej z idealnymi ruchami
+Open `index.html` in a browser to:
+- Play chess on the board
+- See classification of your moves
+- Compare neural network moves with ideal moves
 
-### Przykłady użycia
+### Python Usage Example
 
 ```python
 from classifiers.move_classifier import MoveClassifier
 
 classifier = MoveClassifier()
-result, value = classifier.classify_move(board.fen(), "Nf3", evaluation=0.5)
-print(f"Klasyfikacja: {result.classification}")
-print(f"Wartość pozycji: {value}")
+result, value = classifier.classify_move(
+    board_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    move_san="Nf3",
+    evaluation=0.5,
+    turn_num=1,
+    turn_label="White"
+)
+print(f"Classification: {result.classification}")
+print(f"Position value: {value}")
 ```
 
-## Struktura projektu
+## Project Structure
 
 ```
 chess_bot/
-├── classifiers/              # Moduł klasyfikacji ruchów
+├── classifiers/              # Move classification module
 │   ├── __init__.py
-│   ├── classification_config.py    # Konfiguracja klas i progów
-│   ├── move_classifier.py          # Główny klasyfikator ruchów
-│   ├── self_play_dataset.py        # Dane z gier self-play
-│   └── train_classifier.py         # Trening sieci neuronowej
+│   ├── classification_config.py    # Class names and thresholds
+│   ├── move_classifier.py          # Main move classifier
+│   ├── self_play_dataset.py        # Self-play training dataset
+│   └── train_classifier.py         # Classifier training script
 │
-├── database/                 # Moduł bazy danych
+├── database/                 # Database operations module
 │   ├── __init__.py
-│   ├── chess_db.py           # Operacje CRUD na bazie danych
-│   └── schema.py             # Definicje schematu SQL
+│   ├── chess_db.py           # CRUD operations for games and moves
+│   └── schema.py             # SQL schema definitions
 │
-├── engine/                   # Moduł silnika szachowego
+├── engine/                   # Chess engine module
 │   ├── __init__.py
-│   ├── mcts.py               # Monte Carlo Tree Search
-│   └── rl_trainer.py         # Trening z wzmocnieniem
+│   ├── mcts.py               # Monte Carlo Tree Search with classification priorities
+│   └── rl_trainer.py         # Reinforcement learning training loop
 │
-├── models/                   # Sieci neuronowe
+├── models/                   # Neural network models
 │   ├── __init__.py
-│   ├── chess_nets.py         # Definicje sieci (CoreNet, MoveClassifierNet)
-│   └── weights_bot.pth       # Wagi modelu bot
-│   └── weights_classifier.pth # Wagi klasyfikatora
+│   ├── chess_nets.py         # Network definitions (ChessCoreNet, MoveClassifierNet)
+│   ├── weights_bot.pth       # Bot weights for self-play
+│   └── weights_classifier.pth # Classifier weights
 │
-├── parsers/                  # Parserzy formatów
+├── parsers/                  # Format parsers
 │   ├── __init__.py
-│   └── pgn_parser.py         # Parser plików PGN
+│   └── pgn_parser.py         # PGN file parser with Stockfish filter
 │
-├── server.py                 # FastAPI serwer
-├── main.py                   # Skrypt do przetwarzania partii
-├── prepare_dataset.py        # Przygotowanie danych treningowych
-├── export_pgn.py             # Eksport do formatu PGN
-├── test_inference.py         # Testy inferencji
-├── self_play_games.pgn       # Przykładowe gry self-play
-├── index.html                # Interfejs webowy
-└── requirements.txt          # Wymagania
+├── server.py                 # FastAPI server
+├── main.py                   # CLI for PGN processing
+├── prepare_dataset.py        # Database optimization script
+├── export_pgn.py             # Export self-play games to PGN
+├── test_inference.py         # Inference tests
+├── self_play_games.pgn       # Example self-play games
+├── index.html                # Web interface
+└── requirements.txt          # Python dependencies
 ```
 
-## Architektura
+## Architecture
 
 ```mermaid
 graph TB
     subgraph UI
-        A[Interfejs Webowy]
-        B[API REST]
+        A[Web Interface]
+        B[REST API]
     end
     
     subgraph Core
@@ -160,7 +222,7 @@ graph TB
     K --> G
 ```
 
-### Diagram przepływu danych
+### Data Flow Diagram
 
 ```mermaid
 flowchart LR
@@ -194,20 +256,20 @@ flowchart LR
     P5 --> P7
 ```
 
-## Klasyfikacja ruchów
+## Move Classification
 
-System klasyfikuje ruchy na podstawie oceny pozycji przed i po wykonaniu ruchu:
+The system classifies moves based on the evaluation delta (change in position value) before and after the move:
 
-| Klasa | Opis | Zakres oceny |
-|-------|------|--------------|
-| **Best** | Najlepszy ruch | > 0.8 |
-| **Excellent** | Bardzo dobry ruch | 0.5 - 0.8 |
-| **Good** | Dobry ruch | 0.2 - 0.5 |
-| **Inaccuracy** | Nieprecyzyjny ruch | -0.2 - 0.2 |
-| **Mistake** | Błąd | -0.5 - -0.2 |
-| **Blunder** | Pomyłka | < -0.5 |
+| Class | Description | Delta Range |
+|-------|-------------|-------------|
+| **Best** | Best move | 0.0 - 0.02 |
+| **Excellent** | Very good move | 0.02 - 0.15 |
+| **Good** | Good move | 0.15 - 0.40 |
+| **Inaccuracy** | Inaccurate move | 0.40 - 0.80 |
+| **Mistake** | Mistake | 0.80 - 1.50 |
+| **Blunder** | Blunder | > 1.50 |
 
-### Priorytety w MCTS
+### MCTS Move Priorities
 
 ```
 Best: 1.0
@@ -218,51 +280,90 @@ Mistake: 0.05
 Blunder: 0.001
 ```
 
-## Pliki i katalogi
+## Training Loop
 
-### Root
+The training loop consists of three phases:
 
-- **server.py** - FastAPI serwer z endpointami do analizy ruchów
-- **main.py** - Główny skrypt do przetwarzania i klasyfikacji partii PGN
-- **prepare_dataset.py** - Skrypt do przygotowania i optymalizacji bazy danych treningowych
-- **export_pgn.py** - Eksport danych z bazy do formatu PGN
-- **test_inference.py** - Testy klasyfikatora na przykładowych pozycjach
-- **self_play_games.pgn** - Przykładowe gry wygenerowane przez self-play
-- **index.html** - Interfejs webowy do analizy partii
-- **requirements.txt** - Wymagane zależności Python
-- **chess_bot.db** - Baza danych SQLite (tworzona automatycznie)
+### Phase 1: Self-Play Game Generation
+Generates games using the MCTS engine with temperature-based exploration. Games are saved to the `self_play_moves` table.
 
-### classifiers/
+### Phase 2: Bot Neural Network Training
+Trains the bot network using:
+- Cross-entropy loss for classification
+- MSE loss for value prediction
+- AdamW optimizer with learning rate scheduling
+- Sliding window to keep only the most recent games
 
-- **__init__.py** - Plik inicjalizujący moduł
-- **classification_config.py** - Konfiguracja nazw klas, progów i wartości
-- **move_classifier.py** - Główny klasyfikator ruchów wykorzystujący sieć neuronową
-- **self_play_dataset.py** - Dataset do treningu na danych z gier self-play
-- **train_classifier.py** - Skrypt do trenowania klasyfikatora ruchów
+### Phase 3: Sliding Window
+Maintains a fixed-size dataset by keeping only the last N games, ensuring the model trains on recent data.
 
-### database/
+### Running Training
 
-- **__init__.py** - Plik inicjalizujący moduł
-- **chess_db.py** - Klasa ChessDatabase obsługująca operacje CRUD
-- **schema.py** - Definicje tabel SQL (games, moves) i indeksów
+```bash
+python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5 --keep-n 100
+```
 
-### engine/
+## Database Schema
 
-- **__init__.py** - Plik inicjalizujący moduł
-- **mcts.py** - Implementacja Monte Carlo Tree Search z priorytetami klasyfikacji
-- **rl_trainer.py** - Trening agenta z wzmocnieniem poprzez gry self-play
+### games Table
+```sql
+CREATE TABLE games (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    white_player TEXT NOT NULL,
+    black_player TEXT NOT NULL,
+    fen_start TEXT,
+    fen_end TEXT,
+    result TEXT,
+    classification TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+```
 
-### models/
+### moves Table
+```sql
+CREATE TABLE moves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    move_number INTEGER NOT NULL,
+    fen_before TEXT,
+    fen_after TEXT,
+    move_san TEXT,
+    classification TEXT,
+    evaluation REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+)
+```
 
-- **__init__.py** - Plik inicjalizujący moduł
-- **chess_nets.py** - Definicje sieci neuronowych:
-  - ChessResidualBlock - Blok resydualny
-  - ChessCoreNet - Główna sieć ekstrahująca cechy
-  - MoveClassifierNet - Sieć klasyfikująca ruchy i oceniająca pozycje
-- **weights_bot.pth** - Wagi modelu bot do gier self-play
-- **weights_classifier.pth** - Wagi klasyfikatora ruchów
+### self_play_moves Table
+```sql
+CREATE TABLE self_play_moves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER,
+    fen_before TEXT,
+    move_uci TEXT,
+    mcts_policy TEXT,
+    result_value REAL
+)
+```
 
-### parsers/
+## Neural Network Architecture
 
-- **__init__.py** - Plik inicjalizujący moduł
-- **pgn_parser.py** - Parser plików PGN z filtrowaniem gier z analizą Stockfish
+### ChessCoreNet
+- Input: 25-channel board representation (12 piece types + turn indicator)
+- Initial convolution: 3x3 kernel, 128 output channels
+- 4 residual blocks with BatchNorm and ReLU
+- Output: 128-channel feature map
+
+### MoveClassifierNet
+- Input: 128-channel feature map from ChessCoreNet
+- Convolution reduction: 1x3 kernel to 16 channels
+- Fully connected layer: 16*8*8 -> 256
+- Dropout: 0.4
+- Classification head: 256 -> 6 (class logits)
+- Value head: 16*8*8 -> 32 -> 1 (tanh-scaled value)
+
+## License
+
+This project is open source.

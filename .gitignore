@@ -1,6 +1,7 @@
 lichess_db_standard_rated_2026-04.pgn
 chess_bot.db
-
+stockfish-ubuntu-x86-64-avx2
+stockfish
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -222,4 +223,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-stockfish-ubuntu-x86-64-avx2
+
