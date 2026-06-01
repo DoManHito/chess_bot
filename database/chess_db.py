@@ -243,22 +243,34 @@ class ChessDatabase:
         
         return stats
     
-    def get_all_games(self) -> List[ParsedGame]:
+    def get_all_games(self, limit: int = None) -> List[ParsedGame]:
         """
         Get all games from the database.
         
+        Args:
+            limit: Maximum number of games to return. If None, returns all games.
+            
         Returns:
-            List of all games
+            List of all games (up to limit if specified)
         """
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT id, white_player, black_player, fen_start, fen_end,
-                   result, classification, created_at
-            FROM games
-            ORDER BY created_at DESC
-        """)
+        if limit is not None:
+            cursor.execute("""
+                SELECT id, white_player, black_player, fen_start, fen_end,
+                       result, classification, created_at
+                FROM games
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (limit,))
+        else:
+            cursor.execute("""
+                SELECT id, white_player, black_player, fen_start, fen_end,
+                       result, classification, created_at
+                FROM games
+                ORDER BY created_at DESC
+            """)
         
         rows = cursor.fetchall()
         return [

@@ -141,35 +141,6 @@ def parse_pgn_file(
     logger.info(f"Processed {len(processed_games)} game(s) with {total_moves} move(s)")
     return processed_games
 
-
-def get_player_statistics(player: str, db: ChessDatabase) -> dict:
-    """Get statistics for a player.
-    
-    Args:
-        player: Player name
-        db: ChessDatabase instance
-        
-    Returns:
-        Dictionary with player statistics
-        
-    Raises:
-        Exception: If query fails
-    """
-    try:
-        stats = db.get_player_statistics(player)
-        logger.info(f"Statistics for {player}:")
-        logger.info(f"  Total games: {stats['total_games']}")
-        logger.info(f"  Wins: {stats['wins']}")
-        logger.info(f"  Losses: {stats['losses']}")
-        logger.info(f"  Draws: {stats['draws']}")
-        logger.info(f"  Win rate: {stats['win_rate']:.2f}%")
-        logger.info(f"  Classification breakdown: {stats['classification_breakdown']}")
-        return stats
-    except Exception as e:
-        logger.error(f"Failed to get player statistics: {e}")
-        raise
-
-
 def list_all_games(db: ChessDatabase, limit: int = 100) -> List[DBParsedGame]:
     """List all games in the database.
     
@@ -391,9 +362,6 @@ Examples:
                 logging.getLogger().setLevel(logging.INFO)
             
             logger.info(f"Successfully processed {len(args.file)} file(s)")
-            
-        elif args.command == 'stats':
-            stats = get_player_statistics(args.player, db)
             
         elif args.command == 'list':
             games = list_all_games(db, args.limit)
