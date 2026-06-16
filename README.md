@@ -9,12 +9,11 @@ A chess analysis system that uses a unified neural network with lookahead capabi
 - [Installation](#installation)
 - [Usage](#usage)
 - [API Endpoints](#api-endpoints)
-- [CLI Commands](#cli-commands)
+- [Training](#training)
 - [Project Structure](#project-structure)
 - [Unified Model Architecture](#unified-model-architecture)
 - [Lookahead Capability](#lookahead-capability)
 - [Move Classification](#move-classification)
-- [Training Loop](#training-loop)
 - [Database Schema](#database-schema)
 
 ## Project Description
@@ -28,7 +27,6 @@ Chess Bot is an advanced chess analysis system with unified model architecture t
 - **Predicts policies** for MCTS acceleration
 - **Generates training data** through self-play games with lookahead sequences
 - **Provides REST API** for system interaction
-- **Supports web interface** for game analysis
 
 ## Requirements
 
@@ -39,10 +37,6 @@ Chess Bot is an advanced chess analysis system with unified model architecture t
 - FastAPI >= 0.100.0
 - Uvicorn >= 0.22.0
 - tqdm >= 4.65.0
-- pandas >= 1.3.0
-- matplotlib >= 3.4.0
-- scikit-learn >= 0.24.0
-- Stockfish binary (optional, for move analysis)
 
 ## Installation
 
@@ -88,52 +82,24 @@ python server.py
 }
 ```
 
-### CLI Commands
+## Training
+
+### Self-Play RL Training
+
+Generate self-play games and train with MCTS:
 
 ```bash
-# Initialize the database
-python main.py init
-
-# Parse and classify PGN files
-python main.py parse games.pgn
-
-# Get player statistics
-python main.py stats PlayerName
-
-# List all games
-python main.py list --limit 100
-
-# Show classifications for a specific game
-python main.py classify 1
-
-# Run continuous self-play and training loop
-python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5
-
-# Train unified model on existing Stockfish games (supervised)
-python train_unified.py --mode supervised --epochs 10 --batch-size 256
-
-# Train unified model with self-play RL
-python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800
-
-# Combined: supervised first, then RL
-python train_unified.py --mode combined --epochs 5 --iterations 3
+python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800 --epochs 3 --num-workers 2
 ```
 
-#### auto-train Options
-- `--iters`: Number of global iterations per cycle (default: 10)
-- `--games`: Number of games generated per iteration (default: 20)
-- `--sims`: Number of MCTS simulations per move (default: 60)
-- `--epochs`: Number of neural network training epochs per iteration (default: 5)
-- `--keep-n`: Number of last games to keep in database (default: 100)
-- `--db-path`: Path to database (default: chess_bot.db)
-- `--workers`: Number of processes for parallel game generation (default: 1)
-- `--lookahead`: Enable lookahead training (default: False)
+Options:
+- `--iterations`: Number of RL iterations (default: 5)
+- `--games-per-iter`: Games generated per iteration (default: 10)
+- `--sims`: MCTS simulations per position (default: 800)
+- `--epochs`: Training epochs per iteration (default: 3)
+- `--num-workers`: Parallel workers (default: 1)
 
-### Training Modes
-
-The `train_unified.py` script supports three training modes:
-
-#### 1. Supervised Training
+### Supervised Training
 
 Train on existing Stockfish games from the database using evaluation delta as ground truth:
 
@@ -150,24 +116,7 @@ Options:
 - `--no-val`: Disable validation split
 - `--val-ratio`: Validation ratio (default: 0.1)
 
-#### 2. Self-Play RL Training
-
-Generate self-play games and train with MCTS:
-
-```bash
-python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800
-```
-
-Options:
-- `--iterations`: Number of RL iterations (default: 5)
-- `--games-per-iter`: Games generated per iteration (default: 10)
-- `--sims`: MCTS simulations per position (default: 800)
-- `--epochs`: Training epochs per iteration (default: 3)
-- `--keep-last-n`: Games to keep in database (default: 1000)
-- `--temperature`: Temperature for move selection (default: 1.2)
-- `--num-workers`: Parallel workers (default: 1)
-
-#### 3. Combined Training
+### Combined Training
 
 First train on existing Stockfish games, then continue with self-play RL:
 
@@ -176,111 +125,42 @@ python train_unified.py --mode combined --epochs 5 --iterations 3
 ```
 
 This is recommended for best results:
-1. Phase 1: Learn move quality patterns from 99k Stockfish games
+1. Phase 1: Learn move quality patterns from Stockfish games
 2. Phase 2: Refine with self-play and MCTS
-
-### Training Statistics
-
-Training statistics are saved to `models/training_stats.json`:
-
-```json
-{
-  "epochs": 10,
-  "batch_size": 1024,
-  "lr": 0.001,
-  "alpha": 0.5,
-  "dataset_size": 658,
-  "train_size": 593,
-  "val_size": 66,
-  "best_val_loss": 0.8264,
-  "class_distribution": {
-    "0": 7,
-    "2": 17,
-    "3": 312,
-    "4": 222,
-    "5": 101
-  }
-}
-```
-
-Class distribution:
-- **0 (Best)**: Ideal moves with minimal evaluation change
-- **1 (Excellent)**: Very good moves
-- **2 (Good)**: Solid moves
-- **3 (Inaccuracy)**: Suboptimal moves
-- **4 (Mistake)**: Poor moves
-- **5 (Blunder)**: Very bad moves
-
-### Web Interface
-
-Open `index.html` in a browser to:
-- Play chess on the board
-- See classification of your moves
-- Compare neural network moves with ideal moves
-
-### Python Usage Example
-
-```python
-from classifiers.move_classifier import MoveClassifier
-
-classifier = MoveClassifier()
-result, value = classifier.classify_move(
-    board_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-    move_san="Nf3",
-    evaluation=0.5,
-    turn_num=1,
-    turn_label="White"
-)
-print(f"Classification: {result.classification}")
-print(f"Position value: {value}")
-```
 
 ## Project Structure
 
 ```
 chess_bot/
 ├── classifiers/              # Move classification module
-│   ├── __init__.py
 │   ├── classification_config.py    # Class names and thresholds
 │   ├── move_classifier.py          # Main move classifier
-│   ├── self_play_dataset.py        # Self-play training dataset
-│   ├── stockfish_policy_dataset.py # Stockfish policy dataset
-│   └── train_classifier.py         # Classifier training script
+│   └── self_play_dataset.py        # Self-play training dataset
 │
 ├── database/                 # Database operations module
-│   ├── __init__.py
+│   ├── schema.py             # SQL schema definitions
 │   ├── chess_db.py           # CRUD operations for games and moves
-│   └── schema.py             # SQL schema definitions
+│   └── migrate_db.py         # Database migration script
 │
 ├── engine/                   # Chess engine module
-│   ├── __init__.py
-│   ├── mcts.py               # Monte Carlo Tree Search with classification priorities
 │   ├── unified_mcts.py       # Unified MCTS with policy head
 │   └── rl_trainer.py         # Reinforcement learning training loop
 │
 ├── models/                   # Neural network models
-│   ├── __init__.py
-│   ├── chess_nets.py         # Legacy network definitions
 │   ├── unified_chess_nets.py # Unified model with lookahead support
-│   └── weights_bot.pth       # Bot weights for self-play
+│   ├── weights_bot.pth       # Bot weights for self-play
+│   └── weights_bot copy.pth  # Backup weights
 │
 ├── parsers/                  # Format parsers
-│   ├── __init__.py
 │   └── pgn_parser.py         # PGN file parser with Stockfish filter
 │
-├── plans/                    # Project planning documents
-│   └── unified_model_plan.md # Unified model implementation plan
-│
+├── train_unified.py          # Unified training script
 ├── server.py                 # FastAPI server
-├── main.py                   # CLI for PGN processing
-├── prepare_dataset.py        # Database optimization script
-├── export_pgn.py             # Export self-play games to PGN
 ├── test_inference.py         # Inference tests
 ├── test_unified_model.py     # Unified model tests
-├── stockfish_policy_data.json # Stockfish policy data
-├── self_play_games.pgn       # Example self-play games
-├── index.html                # Web interface
-└── requirements.txt          # Python dependencies
+├── requirements.txt          # Python dependencies
+├── README.md                 # This file
+└── .gitignore
 ```
 
 ## Unified Model Architecture
@@ -407,34 +287,6 @@ Mistake: 0.05
 Blunder: 0.001
 ```
 
-## Training Loop
-
-The training loop consists of three phases:
-
-### Phase 1: Self-Play Game Generation
-Generates games using the MCTS engine with temperature-based exploration. Games are saved to the `self_play_moves` table with lookahead data.
-
-### Phase 2: Unified Model Training
-Trains the unified model using:
-- Cross-entropy loss for classification
-- MSE loss for value prediction
-- KL divergence loss for policy prediction
-- AdamW optimizer with learning rate scheduling
-- Sliding window to keep only the most recent games
-
-### Phase 3: Sliding Window
-Maintains a fixed-size dataset by keeping only the last N games, ensuring the model trains on recent data.
-
-### Running Training
-
-```bash
-# Standard training
-python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5 --keep-n 100
-
-# Training with lookahead capability
-python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5 --keep-n 100 --lookahead
-```
-
 ## Database Schema
 
 ### games Table
@@ -482,24 +334,6 @@ CREATE TABLE self_play_moves (
     future_moves TEXT,
     final_classification TEXT,
     move_sequence_classes TEXT
-)
-```
-
-### move_sequences Table (Lookahead Sequences)
-```sql
-CREATE TABLE move_sequences (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    game_id INTEGER NOT NULL,
-    move_number INTEGER NOT NULL,
-    fen_before TEXT,
-    move_san TEXT,
-    lookahead_depth INTEGER,
-    future_moves TEXT,
-    final_evaluation REAL,
-    final_classification TEXT,
-    move_sequence_classes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
 )
 ```
 

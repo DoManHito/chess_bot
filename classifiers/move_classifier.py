@@ -3,8 +3,7 @@ import chess
 import numpy as np
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
-from models.chess_nets import ChessCoreNet, MoveClassifierNet
-from models.unified_chess_nets import UnifiedMoveClassifierNet, CLASS_NAMES
+from models.unified_chess_nets import ChessCoreNet, UnifiedMoveClassifierNet, CLASS_NAMES
 from .classification_config import CLASS_NAMES as CLASS_NAMES_CONFIG
 
 
@@ -79,36 +78,27 @@ class MoveClassifier:
     categories (Best, Excellent, Good, Inaccuracy, Mistake, Blunder) and predict
     the evaluation of the position after the move.
 
-    Supports both legacy model (MoveClassifierNet) and unified model (UnifiedMoveClassifierNet).
+    Uses the unified model (UnifiedMoveClassifierNet) with policy head.
 
     Args:
         weights_path: Path to trained weights file
         device: Torch device to use ("cuda" or "cpu", None = auto-detect)
-        use_unified_model: Whether to use the unified model with policy head (default: False)
         policy_output_dim: Dimension of policy output for unified model (default: 64)
     """
     def __init__(self, weights_path: str = "models/weights_bot.pth", device: str = None,
-                 use_unified_model: bool = False, policy_output_dim: int = 64) -> None:
+                 policy_output_dim: int = 64) -> None:
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
-        self.use_unified_model = use_unified_model
 
-        # Initialize the neural network
-        if use_unified_model:
-            core = ChessCoreNet(in_channels=25)
-            self.model = UnifiedMoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES), policy_output_dim=policy_output_dim)
-        else:
-            core = ChessCoreNet(in_channels=25)
-            self.model = MoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES))
+        # Initialize the unified neural network
+        core = ChessCoreNet(in_channels=25)
+        self.model = UnifiedMoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES), policy_output_dim=policy_output_dim)
 
         try:
             # Load trained weights
             state = torch.load(weights_path, map_location=self.device)
-            if use_unified_model:
-                self.model.load_state_dict(state, strict=False)
-            else:
-                self.model.load_state_dict(state, strict=False)
+            self.model.load_state_dict(state, strict=False)
             self.model.to(self.device)
             self.model.eval()
             self.has_weights = True
@@ -145,10 +135,7 @@ class MoveClassifier:
         tensor = self._board_to_tensor_static(board_before, board_after).to(self.device)
         # Forward pass (no gradient tracking for inference)
         with torch.no_grad():
-            if self.use_unified_model:
-                logits, value_tensor, _ = self.model(tensor)
-            else:
-                logits, value_tensor = self.model(tensor)
+            logits, value_tensor, _ = self.model(tensor)
             probabilities = torch.softmax(logits, dim=1).squeeze(0)
             max_idx = torch.argmax(probabilities).item()
             confidence = probabilities[max_idx].item()
@@ -193,12 +180,9 @@ class MoveClassifier:
             return [], [], []
 
         batch = torch.stack(tensors).to(self.device)
-        # Forward pass
+        # Forward pass (unified model)
         with torch.no_grad():
-            if self.use_unified_model:
-                logits, values, _ = self.model(batch)
-            else:
-                logits, values = self.model(batch)
+            logits, values, policy = self.model(batch)
             probs = torch.softmax(logits, dim=1)
             max_probs, indices = probs.max(dim=1)
             classes = [CLASS_NAMES[idx] for idx in indices.tolist()]

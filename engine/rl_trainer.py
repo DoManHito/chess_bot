@@ -14,9 +14,8 @@ import multiprocessing as mp
 from functools import partial
 
 from classifiers.move_classifier import MoveClassifier
-from engine.mcts import MoveClassifierMCTS
-from models.chess_nets import ChessCoreNet, MoveClassifierNet
-from models.unified_chess_nets import UnifiedMoveClassifierNet, LookaheadMoveData
+from engine.unified_mcts import UnifiedMCTS
+from models.unified_chess_nets import ChessCoreNet, UnifiedMoveClassifierNet, LookaheadMoveData
 from classifiers.classification_config import CLASS_NAMES
 from classifiers.self_play_dataset import ChessSelfPlayDataset, LookaheadChessSelfPlayDataset
 
@@ -97,7 +96,7 @@ def play_one_game_with_lookahead(game_id, bot_weights, num_simulations, temperat
     # Initialize evaluator and MCTS engine
     evaluator = MoveClassifier(weights_path=bot_weights, device="cpu")
     evaluator.model.eval()
-    mcts = MoveClassifierMCTS(classifier=evaluator)
+    mcts = UnifiedMCTS(unified_model=evaluator.model, cpuct=2.0, max_simulations=num_simulations, top_moves_ratio=0.3, policy_output_dim=64)
 
     board = chess.Board()
     game_history = []
