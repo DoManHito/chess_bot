@@ -53,18 +53,46 @@ def create_tables(conn: sqlite3.Connection) -> None:
     
     # Create indexes for efficient querying
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_games_classification 
+        CREATE INDEX IF NOT EXISTS idx_games_classification
         ON games (classification)
     """)
     
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_moves_game_id 
+        CREATE INDEX IF NOT EXISTS idx_moves_game_id
         ON moves (game_id)
     """)
     
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_moves_classification 
+        CREATE INDEX IF NOT EXISTS idx_moves_classification
         ON moves (classification)
+    """)
+    
+    # Self-play moves table for RL training
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS self_play_moves (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id INTEGER,
+            fen_before TEXT,
+            move_uci TEXT,
+            mcts_policy TEXT,
+            result_value REAL,
+            lookahead_depth INTEGER,
+            future_moves TEXT,
+            final_classification TEXT,
+            move_sequence_classes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Indexes for self_play_moves
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_self_play_game_id
+        ON self_play_moves (game_id)
+    """)
+    
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_self_play_fen
+        ON self_play_moves (fen_before)
     """)
     
     conn.commit()

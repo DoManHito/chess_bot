@@ -1,21 +1,17 @@
-"""Move classification module for chess bot."""
+"""Classifiers package - Move classification and related utilities."""
 
-from .classification_config import (
-    ClassificationThreshold,
-    THRESHOLDS,
-    NEGATIVE_THRESHOLD,
-)
 from .move_classifier import (
     MoveData,
     MoveClassificationResult,
-    MoveClassifier,
+    MoveClassifier
 )
+from .classification_config import CLASS_NAMES, THRESHOLDS, ClassificationThreshold
 
 __all__ = [
-    "ClassificationThreshold",
-    "THRESHOLDS",
-    "NEGATIVE_THRESHOLD",
-    "MoveData",
-    "MoveClassificationResult",
-    "MoveClassifier",
+    'MoveData',
+    'MoveClassificationResult',
+    'MoveClassifier',
+    'CLASS_NAMES',
+    'THRESHOLDS',
+    'ClassificationThreshold'
 ]

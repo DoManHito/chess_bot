@@ -265,6 +265,7 @@ Examples:
     rl_parser.add_argument('--keep-n', type=int, default=100, help='Number of last games to keep in database (default: 100)')
     rl_parser.add_argument('--db-path', default='chess_bot.db', help='Path to database (default: chess_bot.db)')
     rl_parser.add_argument('--workers', type=int, default=1, help='Number of processes for parallel game generation (default: 1)')
+    rl_parser.add_argument('--use-stockfish-policy', action='store_true', help='Use Stockfish policy data for training policy head')
     
     init_parser = subparsers.add_parser('init', help='Initialize the database')
     init_parser.add_argument(
@@ -379,6 +380,7 @@ Examples:
                 keep_last_n=args.keep_n,
                 db_path=args.db_path,
                 num_workers=args.workers,
+                use_stockfish_policy=args.use_stockfish_policy,
             )
             
     except FileNotFoundError as e:

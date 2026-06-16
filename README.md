@@ -1,6 +1,6 @@
-# Chess Bot - Neural Network Move Classifier
+# Chess Bot - Unified Model with Lookahead Capability
 
-A chess analysis system that uses neural networks and machine learning algorithms to classify and evaluate chess moves. The system compares moves made by a neural network with ideal moves determined by Stockfish.
+A chess analysis system that uses a unified neural network with lookahead capability to classify and evaluate chess moves. The system combines move classification, position evaluation, and policy prediction into a single model that learns to predict move quality based on future game outcomes.
 
 ## Table of Contents
 
@@ -11,19 +11,22 @@ A chess analysis system that uses neural networks and machine learning algorithm
 - [API Endpoints](#api-endpoints)
 - [CLI Commands](#cli-commands)
 - [Project Structure](#project-structure)
-- [Architecture](#architecture)
+- [Unified Model Architecture](#unified-model-architecture)
+- [Lookahead Capability](#lookahead-capability)
 - [Move Classification](#move-classification)
 - [Training Loop](#training-loop)
 - [Database Schema](#database-schema)
 
 ## Project Description
 
-Chess Bot is an advanced chess analysis system that:
+Chess Bot is an advanced chess analysis system with unified model architecture that:
 
+- **Unified Model**: Single neural network with three heads (Classification, Value, Policy)
+- **Lookahead Learning**: Trains on move sequences to understand consequences of each move
 - **Classifies moves** as: Best, Excellent, Good, Inaccuracy, Mistake, Blunder
 - **Evaluates positions** using values from -1 to 1
-- **Compares** neural network moves with Stockfish recommendations
-- **Generates training data** through self-play games
+- **Predicts policies** for MCTS acceleration
+- **Generates training data** through self-play games with lookahead sequences
 - **Provides REST API** for system interaction
 - **Supports web interface** for game analysis
 
@@ -105,6 +108,15 @@ python main.py classify 1
 
 # Run continuous self-play and training loop
 python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5
+
+# Train unified model on existing Stockfish games (supervised)
+python train_unified.py --mode supervised --epochs 10 --batch-size 256
+
+# Train unified model with self-play RL
+python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800
+
+# Combined: supervised first, then RL
+python train_unified.py --mode combined --epochs 5 --iterations 3
 ```
 
 #### auto-train Options
@@ -115,6 +127,89 @@ python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5
 - `--keep-n`: Number of last games to keep in database (default: 100)
 - `--db-path`: Path to database (default: chess_bot.db)
 - `--workers`: Number of processes for parallel game generation (default: 1)
+- `--lookahead`: Enable lookahead training (default: False)
+
+### Training Modes
+
+The `train_unified.py` script supports three training modes:
+
+#### 1. Supervised Training
+
+Train on existing Stockfish games from the database using evaluation delta as ground truth:
+
+```bash
+python train_unified.py --mode supervised --epochs 10 --batch-size 256 --sample-rate 1.0
+```
+
+Options:
+- `--epochs`: Number of training epochs (default: 10)
+- `--batch-size`: Batch size for training (default: 256)
+- `--lr`: Learning rate (default: 0.001)
+- `--alpha`: Value loss weight (default: 0.5)
+- `--sample-rate`: Fraction of data to sample (1.0 = all data)
+- `--no-val`: Disable validation split
+- `--val-ratio`: Validation ratio (default: 0.1)
+
+#### 2. Self-Play RL Training
+
+Generate self-play games and train with MCTS:
+
+```bash
+python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800
+```
+
+Options:
+- `--iterations`: Number of RL iterations (default: 5)
+- `--games-per-iter`: Games generated per iteration (default: 10)
+- `--sims`: MCTS simulations per position (default: 800)
+- `--epochs`: Training epochs per iteration (default: 3)
+- `--keep-last-n`: Games to keep in database (default: 1000)
+- `--temperature`: Temperature for move selection (default: 1.2)
+- `--num-workers`: Parallel workers (default: 1)
+
+#### 3. Combined Training
+
+First train on existing Stockfish games, then continue with self-play RL:
+
+```bash
+python train_unified.py --mode combined --epochs 5 --iterations 3
+```
+
+This is recommended for best results:
+1. Phase 1: Learn move quality patterns from 99k Stockfish games
+2. Phase 2: Refine with self-play and MCTS
+
+### Training Statistics
+
+Training statistics are saved to `models/training_stats.json`:
+
+```json
+{
+  "epochs": 10,
+  "batch_size": 1024,
+  "lr": 0.001,
+  "alpha": 0.5,
+  "dataset_size": 658,
+  "train_size": 593,
+  "val_size": 66,
+  "best_val_loss": 0.8264,
+  "class_distribution": {
+    "0": 7,
+    "2": 17,
+    "3": 312,
+    "4": 222,
+    "5": 101
+  }
+}
+```
+
+Class distribution:
+- **0 (Best)**: Ideal moves with minimal evaluation change
+- **1 (Excellent)**: Very good moves
+- **2 (Good)**: Solid moves
+- **3 (Inaccuracy)**: Suboptimal moves
+- **4 (Mistake)**: Poor moves
+- **5 (Blunder)**: Very bad moves
 
 ### Web Interface
 
@@ -149,6 +244,7 @@ chess_bot/
 │   ├── classification_config.py    # Class names and thresholds
 │   ├── move_classifier.py          # Main move classifier
 │   ├── self_play_dataset.py        # Self-play training dataset
+│   ├── stockfish_policy_dataset.py # Stockfish policy dataset
 │   └── train_classifier.py         # Classifier training script
 │
 ├── database/                 # Database operations module
@@ -159,102 +255,133 @@ chess_bot/
 ├── engine/                   # Chess engine module
 │   ├── __init__.py
 │   ├── mcts.py               # Monte Carlo Tree Search with classification priorities
+│   ├── unified_mcts.py       # Unified MCTS with policy head
 │   └── rl_trainer.py         # Reinforcement learning training loop
 │
 ├── models/                   # Neural network models
 │   ├── __init__.py
-│   ├── chess_nets.py         # Network definitions (ChessCoreNet, MoveClassifierNet)
-│   ├── weights_bot.pth       # Bot weights for self-play
-│   └── weights_classifier.pth # Classifier weights
+│   ├── chess_nets.py         # Legacy network definitions
+│   ├── unified_chess_nets.py # Unified model with lookahead support
+│   └── weights_bot.pth       # Bot weights for self-play
 │
 ├── parsers/                  # Format parsers
 │   ├── __init__.py
 │   └── pgn_parser.py         # PGN file parser with Stockfish filter
+│
+├── plans/                    # Project planning documents
+│   └── unified_model_plan.md # Unified model implementation plan
 │
 ├── server.py                 # FastAPI server
 ├── main.py                   # CLI for PGN processing
 ├── prepare_dataset.py        # Database optimization script
 ├── export_pgn.py             # Export self-play games to PGN
 ├── test_inference.py         # Inference tests
+├── test_unified_model.py     # Unified model tests
+├── stockfish_policy_data.json # Stockfish policy data
 ├── self_play_games.pgn       # Example self-play games
 ├── index.html                # Web interface
 └── requirements.txt          # Python dependencies
 ```
 
-## Architecture
+## Unified Model Architecture
 
-```mermaid
-graph TB
-    subgraph UI
-        A[Web Interface]
-        B[REST API]
-    end
-    
-    subgraph Core
-        C[MoveClassifier]
-        D[MCTS Engine]
-        E[ChessCoreNet]
-        F[MoveClassifierNet]
-    end
-    
-    subgraph Data
-        G[SQLite Database]
-        H[PGN Parser]
-        I[Self-Play Dataset]
-    end
-    
-    subgraph Training
-        J[RL Trainer]
-        K[Classifier Trainer]
-    end
-    
-    A --> B
-    B --> C
-    B --> D
-    C --> E
-    C --> F
-    D --> C
-    C --> G
-    D --> G
-    H --> G
-    I --> G
-    J --> G
-    K --> G
+### UnifiedMoveClassifierNet
+
+The unified model combines three heads into a single network:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              Unified Chess Model                         │
+│  ┌───────────────────────────────────────────────┐     │
+│  │           Shared Backbone (ChessCoreNet)       │     │
+│  │  (Conv2D + Residual Blocks)                    │     │
+│  └─────────────┬─────────────────────────────────┘     │
+│                │                                         │
+│  ┌─────────────┴─────────────────────────────────┐     │
+│  │  Classification Head (6 classes)               │     │
+│  │  (Best/Excellent/Good/Inaccuracy/Mistake/Blunder)│     │
+│  └───────────────────────────────────────────────┘     │
+│  ┌───────────────────────────────────────────────┐     │
+│  │  Value Head (-1 to 1)                          │     │
+│  └───────────────────────────────────────────────┘     │
+│  ┌───────────────────────────────────────────────┐     │
+│  │  Policy Head (Move probabilities)              │     │
+│  │  (for MCTS acceleration)                       │     │
+│  └───────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow Diagram
+### ChessCoreNet (Shared Backbone)
+- Input: 25-channel board representation (12 piece types + turn indicator)
+- Initial convolution: 3x3 kernel, 128 output channels
+- 4 residual blocks with BatchNorm and ReLU
+- Output: 128-channel feature map
 
-```mermaid
-flowchart LR
-    subgraph Input
-        P1[PGN File]
-        P2[Board Position]
-    end
-    
-    subgraph Processing
-        P3[PGN Parser]
-        P4[MoveClassifier]
-        P5[MCTS]
-    end
-    
-    subgraph Storage
-        P6[(SQLite DB)]
-    end
-    
-    subgraph Output
-        P7[Classified Moves]
-        P8[Evaluated Position]
-    end
-    
-    P1 --> P3
-    P2 --> P4
-    P3 --> P6
-    P4 --> P6
-    P4 --> P7
-    P4 --> P8
-    P5 --> P6
-    P5 --> P7
+### Classification Head
+- Convolution reduction: 1x1 kernel to 16 channels
+- Fully connected: 16*8*8 -> 256 -> 6 (class logits)
+- Dropout: 0.4
+
+### Value Head
+- Fully connected: 16*8*8 -> 32 -> 1
+- Output: tanh-scaled value in [-1, 1]
+
+### Policy Head (NEW for MCTS)
+- Fully connected: 16*8*8 -> 128 -> 32 -> 64
+- Output: Softmax-normalized move probabilities
+- Used to accelerate MCTS by predicting move distributions
+
+## Lookahead Capability
+
+### Concept
+Instead of classifying only a single move, the model learns to evaluate:
+1. **Current move** (as before)
+2. **Subsequent N moves** (lookahead sequence)
+3. **Final game result** after the sequence
+
+### Lookahead Data Structure
+```python
+@dataclass
+class LookaheadMoveData:
+    """Data for lookahead training"""
+    board_fen: str                    # Starting position
+    move_san: str                     # Move to evaluate
+    lookahead_depth: int              # Sequence depth (e.g., 3)
+    future_moves: List[str]           # Subsequent moves
+    final_evaluation: float           # Evaluation after sequence
+    final_classification: str         # Class of final position
+    move_sequence_classifications: List[str]  # Class of each move in sequence
 ```
+
+### Example Lookahead Data
+```json
+{
+  "board_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  "move_san": "e4",
+  "lookahead_depth": 3,
+  "future_moves": ["e5", "Nf3", "Nc6"],
+  "final_evaluation": 0.15,
+  "final_classification": "Good",
+  "move_sequence_classifications": ["Excellent", "Good", "Excellent"]
+}
+```
+
+### Training with Lookahead
+The unified model is trained with a combined loss:
+```python
+loss = (
+    alpha * classification_loss +
+    beta * value_loss +
+    gamma * policy_loss
+)
+```
+
+### Benefits
+1. **Lookahead learning** — Model learns consequences of moves
+2. **Unified architecture** — Less code, easier maintenance
+3. **Policy head** — MCTS acceleration via predicted move distributions
+4. **Consistency** — All predictions from single model
+5. **Data efficiency** — Each self-play game yields more training examples
 
 ## Move Classification
 
@@ -285,12 +412,13 @@ Blunder: 0.001
 The training loop consists of three phases:
 
 ### Phase 1: Self-Play Game Generation
-Generates games using the MCTS engine with temperature-based exploration. Games are saved to the `self_play_moves` table.
+Generates games using the MCTS engine with temperature-based exploration. Games are saved to the `self_play_moves` table with lookahead data.
 
-### Phase 2: Bot Neural Network Training
-Trains the bot network using:
+### Phase 2: Unified Model Training
+Trains the unified model using:
 - Cross-entropy loss for classification
 - MSE loss for value prediction
+- KL divergence loss for policy prediction
 - AdamW optimizer with learning rate scheduling
 - Sliding window to keep only the most recent games
 
@@ -300,7 +428,11 @@ Maintains a fixed-size dataset by keeping only the last N games, ensuring the mo
 ### Running Training
 
 ```bash
+# Standard training
 python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5 --keep-n 100
+
+# Training with lookahead capability
+python main.py auto-train --iters 10 --games 20 --sims 60 --epochs 5 --keep-n 100 --lookahead
 ```
 
 ## Database Schema
@@ -331,12 +463,13 @@ CREATE TABLE moves (
     move_san TEXT,
     classification TEXT,
     evaluation REAL,
+    evaluation_change REAL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
 )
 ```
 
-### self_play_moves Table
+### self_play_moves Table (with Lookahead Support)
 ```sql
 CREATE TABLE self_play_moves (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,25 +477,31 @@ CREATE TABLE self_play_moves (
     fen_before TEXT,
     move_uci TEXT,
     mcts_policy TEXT,
-    result_value REAL
+    result_value REAL,
+    lookahead_depth INTEGER,
+    future_moves TEXT,
+    final_classification TEXT,
+    move_sequence_classes TEXT
 )
 ```
 
-## Neural Network Architecture
-
-### ChessCoreNet
-- Input: 25-channel board representation (12 piece types + turn indicator)
-- Initial convolution: 3x3 kernel, 128 output channels
-- 4 residual blocks with BatchNorm and ReLU
-- Output: 128-channel feature map
-
-### MoveClassifierNet
-- Input: 128-channel feature map from ChessCoreNet
-- Convolution reduction: 1x3 kernel to 16 channels
-- Fully connected layer: 16*8*8 -> 256
-- Dropout: 0.4
-- Classification head: 256 -> 6 (class logits)
-- Value head: 16*8*8 -> 32 -> 1 (tanh-scaled value)
+### move_sequences Table (Lookahead Sequences)
+```sql
+CREATE TABLE move_sequences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL,
+    move_number INTEGER NOT NULL,
+    fen_before TEXT,
+    move_san TEXT,
+    lookahead_depth INTEGER,
+    future_moves TEXT,
+    final_evaluation REAL,
+    final_classification TEXT,
+    move_sequence_classes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+)
+```
 
 ## License
 

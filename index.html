@@ -51,12 +51,18 @@
             $status.html(playerFeedbackHtml + "<br><span style='color: #aaa;'>Bot is thinking...</span>");
 
             $.get('http://127.0.0.1:8000/get_move', { fen: game.fen(), simulations: 100 }, function(data) {
+                console.log('Bot response:', data);
                 if (data.error) {
                     $status.html('Error: ' + data.error);
                     return;
                 }
 
-                game.move({ uci: true, from: data.move_uci.substring(0, 2), to: data.move_uci.substring(2, 4) });
+                if (!data.move_uci) {
+                    $status.html('Error: No move returned from bot');
+                    return;
+                }
+
+                game.move({ from: data.move_uci.substring(0, 2), to: data.move_uci.substring(2, 4), promotion: 'q' });
                 board.position(game.fen());
                 
                 if (game.in_checkmate()) {

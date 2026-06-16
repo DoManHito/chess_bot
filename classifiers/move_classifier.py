@@ -1,10 +1,11 @@
 import torch
 import chess
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from models.chess_nets import ChessCoreNet, MoveClassifierNet
-from .classification_config import CLASS_NAMES
+from models.unified_chess_nets import UnifiedMoveClassifierNet, CLASS_NAMES
+from .classification_config import CLASS_NAMES as CLASS_NAMES_CONFIG
 
 
 @dataclass
@@ -64,21 +65,9 @@ class MoveClassificationResult:
 
     @property
     def move_number(self) -> int:
-        """
-        Get the move number as a property.
-
-        Returns:
-            The turn number
-        """
         return self.turn_num
 
     def __str__(self) -> str:
-        """
-        Return a string representation of the classification result.
-
-        Returns:
-            Formatted string: "Turn N (TurnLabel): Classification (eval=X.XX, conf=X.XX)"
-        """
         return f"Turn {self.turn_num} ({self.turn_label}): {self.classification} (eval={self.evaluation:.2f}, conf={self.confidence:.2f})"
 
 
@@ -90,110 +79,46 @@ class MoveClassifier:
     categories (Best, Excellent, Good, Inaccuracy, Mistake, Blunder) and predict
     the evaluation of the position after the move.
 
-    The classifier:
-    1. Converts chess board states to 25-channel tensors
-    2. Uses a convolutional neural network to extract features
-    3. Produces classification logits and value predictions
-    4. Supports both single-move and batch move classification
+    Supports both legacy model (MoveClassifierNet) and unified model (UnifiedMoveClassifierNet).
 
     Args:
-        weights_path: Path to trained weights file (default: "models/weights_classifier.pth")
+        weights_path: Path to trained weights file
         device: Torch device to use ("cuda" or "cpu", None = auto-detect)
-
-    Attributes:
-        device: Torch device being used
-        model: The neural network model
-        has_weights: Whether trained weights were successfully loaded
+        use_unified_model: Whether to use the unified model with policy head (default: False)
+        policy_output_dim: Dimension of policy output for unified model (default: 64)
     """
-    def __init__(self, weights_path: str = "models/weights_classifier.pth", device: str = None) -> None:
-        """
-        Initialize the move classifier.
-
-        Args:
-            weights_path: Path to trained weights file
-            device: Torch device ("cuda" or "cpu", None = auto-detect)
-        """
+    def __init__(self, weights_path: str = "models/weights_bot.pth", device: str = None,
+                 use_unified_model: bool = False, policy_output_dim: int = 64) -> None:
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
+        self.use_unified_model = use_unified_model
 
         # Initialize the neural network
-        core = ChessCoreNet(in_channels=25)
-        self.model = MoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES))
+        if use_unified_model:
+            core = ChessCoreNet(in_channels=25)
+            self.model = UnifiedMoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES), policy_output_dim=policy_output_dim)
+        else:
+            core = ChessCoreNet(in_channels=25)
+            self.model = MoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES))
 
         try:
             # Load trained weights
             state = torch.load(weights_path, map_location=self.device)
-            self.model.load_state_dict(state, strict=False)
+            if use_unified_model:
+                self.model.load_state_dict(state, strict=False)
+            else:
+                self.model.load_state_dict(state, strict=False)
             self.model.to(self.device)
             self.model.eval()
             self.has_weights = True
-            print(f"MoveClassifier loaded on {self.device}")
         except FileNotFoundError:
             print(f"Warning: Weights {weights_path} not found. Classifier outputs random values.")
             self.has_weights = False
 
-    @staticmethod
-    def _board_to_tensor_static(board_before: chess.Board, board_after: chess.Board) -> torch.Tensor:
-        """
-        Convert chess board states to a 25-channel tensor representation.
-
-        This static method creates a tensor that encodes both the board state before
-        and after a move, allowing the neural network to learn the effect of moves.
-
-        Tensor Structure (25 channels x 8x8 board):
-        - Channels 0-5: White pieces before move (PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING)
-        - Channels 6-11: Black pieces before move
-        - Channels 12-17: White pieces after move
-        - Channels 18-23: Black pieces after move
-        - Channel 24: Turn indicator (1 = White to move, 0 = Black to move)
-
-        Args:
-            board_before: Chess board state before the move
-            board_after: Chess board state after the move
-
-        Returns:
-            torch.Tensor of shape (25, 8, 8) with board representation
-        """
-        tensor = np.zeros((25, 8, 8), dtype=np.float32)
-        piece_to_layer = {
-            chess.PAWN: 0, chess.KNIGHT: 1, chess.BISHOP: 2,
-            chess.ROOK: 3, chess.QUEEN: 4, chess.KING: 5
-        }
-        # Encode white pieces from board_before (channels 0-5)
-        for square in chess.SQUARES:
-            row = 7 - (square // 8)
-            col = square % 8
-            piece_before = board_before.piece_at(square)
-            if piece_before:
-                layer = piece_to_layer[piece_before.piece_type]
-                if piece_before.color == chess.WHITE:
-                    tensor[layer, row, col] = 1.0
-                else:
-                    tensor[layer + 6, row, col] = 1.0
-            # Encode white pieces from board_after (channels 12-17)
-            piece_after = board_after.piece_at(square)
-            if piece_after:
-                layer = piece_to_layer[piece_after.piece_type]
-                if piece_after.color == chess.WHITE:
-                    tensor[layer + 12, row, col] = 1.0
-                else:
-                    tensor[layer + 18, row, col] = 1.0
-        # Layer 24: Whose turn BEFORE (White=1, Black=0)
-        if board_before.turn == chess.WHITE:
-            tensor[24, :, :] = 1.0
-        return torch.tensor(tensor, dtype=torch.float32).unsqueeze(0)
-
     def classify_move(self, board_fen: str, move_san: str, evaluation: float = 0.0, turn_num: int = 1, turn_label: str = "White"):
         """
         Classify a single chess move.
-
-        This method:
-        1. Parses the move from SAN notation
-        2. Creates board states before and after the move
-        3. Converts to tensor representation
-        4. Runs the neural network forward pass
-        5. Returns classification and confidence
 
         Args:
             board_fen: FEN string representing the board before the move
@@ -213,7 +138,6 @@ class MoveClassifier:
             move = board_after.parse_san(move_san)
             board_after.push(move)
         except Exception:
-            # Invalid move, return Unknown classification
             return MoveClassificationResult(evaluation=evaluation, turn_num=turn_num, turn_label=turn_label,
                 classification="Unknown", confidence=0.0, move_san=move_san, fen_before=board_fen, fen_after=board_after.fen()), 0.0
 
@@ -221,7 +145,10 @@ class MoveClassifier:
         tensor = self._board_to_tensor_static(board_before, board_after).to(self.device)
         # Forward pass (no gradient tracking for inference)
         with torch.no_grad():
-            logits, value_tensor = self.model(tensor)
+            if self.use_unified_model:
+                logits, value_tensor, _ = self.model(tensor)
+            else:
+                logits, value_tensor = self.model(tensor)
             probabilities = torch.softmax(logits, dim=1).squeeze(0)
             max_idx = torch.argmax(probabilities).item()
             confidence = probabilities[max_idx].item()
@@ -234,12 +161,9 @@ class MoveClassifier:
         """
         Classify multiple moves in a single batch.
 
-        This method is more efficient than calling classify_move() multiple times
-        because it processes all moves through the neural network in one forward pass.
-
         Args:
             board_before: Chess board state before the moves
-            moves_san: List of moves in Standard Algebraic Notation
+            moves_san: List of moves in UCI or SAN notation
 
         Returns:
             Tuple of (classes, confidences, values):
@@ -248,25 +172,33 @@ class MoveClassifier:
             - values: List of value predictions
         """
         tensors = []
-        for san in moves_san:
+        for move_notation in moves_san:
             board_after = board_before.copy()
             try:
-                move = board_after.parse_san(san)
+                # Try to parse as UCI first (e.g., "e2e4"), then as SAN
+                move = board_after.parse_uci(move_notation)
                 board_after.push(move)
                 tensor = self._board_to_tensor_static(board_before, board_after).squeeze(0)
             except Exception:
-                # Invalid move, use zero tensor
-                tensor = torch.zeros(25, 8, 8)
+                # Fall back to SAN parsing
+                try:
+                    move = board_after.parse_san(move_notation)
+                    board_after.push(move)
+                    tensor = self._board_to_tensor_static(board_before, board_after).squeeze(0)
+                except Exception:
+                    tensor = torch.zeros(25, 8, 8)
             tensors.append(tensor)
 
         if not tensors:
             return [], [], []
 
-        # Stack tensors into batch
         batch = torch.stack(tensors).to(self.device)
         # Forward pass
         with torch.no_grad():
-            logits, values = self.model(batch)
+            if self.use_unified_model:
+                logits, values, _ = self.model(batch)
+            else:
+                logits, values = self.model(batch)
             probs = torch.softmax(logits, dim=1)
             max_probs, indices = probs.max(dim=1)
             classes = [CLASS_NAMES[idx] for idx in indices.tolist()]
@@ -283,8 +215,6 @@ class MoveClassifier:
         """
         Classify a list of moves using MoveData objects.
 
-        Convenience method that wraps classify_move() for use with MoveData objects.
-
         Args:
             moves: List of MoveData objects
 
@@ -296,3 +226,116 @@ class MoveClassifier:
             res, _ = self.classify_move(move.board_fen, move.move_san, move.evaluation, move.turn_num, move.turn_label)
             results.append(res)
         return results
+
+    def get_policy(self, board: chess.Board, top_k: int = 64) -> dict:
+        """
+        Get policy probabilities for top K moves (unified model only).
+
+        Args:
+            board: Chess board position
+            top_k: Number of top moves to return (default: 64)
+
+        Returns:
+            Dictionary mapping move UCI to probability
+        """
+        if not self.use_unified_model:
+            raise NotImplementedError("Policy head not available in legacy model. Use use_unified_model=True.")
+
+        # Create tensor from current board only (for policy head)
+        tensor = self._board_to_tensor_for_policy(board).to(self.device)
+        with torch.no_grad():
+            _, _, policy = self.model(tensor)
+        policy = policy[0, :top_k].cpu().numpy()
+
+        # Get legal moves
+        legal_moves = list(board.legal_moves)
+        if not legal_moves:
+            return {}
+
+        # Convert to dictionary
+        policy_dict = {}
+        for i, move in enumerate(legal_moves[:top_k]):
+            policy_dict[move.uci()] = policy[i]
+
+        # Normalize
+        total = sum(policy_dict.values())
+        if total > 0:
+            policy_dict = {k: v / total for k, v in policy_dict.items()}
+
+        return policy_dict
+
+    @staticmethod
+    def _board_to_tensor_static(board_before: chess.Board, board_after: chess.Board) -> torch.Tensor:
+        """
+        Convert chess board states to a 25-channel tensor representation.
+
+        Args:
+            board_before: Chess board state before the move
+            board_after: Chess board state after the move
+
+        Returns:
+            torch.Tensor of shape (25, 8, 8) with board representation
+        """
+        tensor = np.zeros((25, 8, 8), dtype=np.float32)
+
+        pieces = [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING]
+
+        # Encode white pieces from board_before (channels 0-5)
+        for i, piece in enumerate(pieces):
+            for sq in board_before.pieces(piece, chess.WHITE):
+                tensor[i, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+            # Encode black pieces from board_before (channels 6-11)
+            for sq in board_before.pieces(piece, chess.BLACK):
+                tensor[i + 6, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+
+        # Encode white pieces from board_after (channels 12-17)
+        for i, piece in enumerate(pieces):
+            for sq in board_after.pieces(piece, chess.WHITE):
+                tensor[i + 12, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+            # Encode black pieces from board_after (channels 18-23)
+            for sq in board_after.pieces(piece, chess.BLACK):
+                tensor[i + 18, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+
+        # Layer 24: Whose turn BEFORE (White=1, Black=0)
+        if board_before.turn == chess.WHITE:
+            tensor[24, :, :] = 1.0
+
+        return torch.tensor(tensor, dtype=torch.float32).unsqueeze(0)
+
+    @staticmethod
+    def _board_to_tensor_for_policy(board: chess.Board) -> torch.Tensor:
+        """
+        Convert chess board state to a 25-channel tensor for policy head.
+        Uses current board for all piece channels (simplified representation).
+
+        Args:
+            board: Current chess board state
+
+        Returns:
+            torch.Tensor of shape (1, 25, 8, 8) with board representation
+        """
+        tensor = np.zeros((25, 8, 8), dtype=np.float32)
+
+        pieces = [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING]
+
+        # Encode white pieces (channels 0-5)
+        for i, piece in enumerate(pieces):
+            for sq in board.pieces(piece, chess.WHITE):
+                tensor[i, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+            # Encode black pieces (channels 6-11)
+            for sq in board.pieces(piece, chess.BLACK):
+                tensor[i + 6, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+
+        # Encode white pieces (channels 12-17)
+        for i, piece in enumerate(pieces):
+            for sq in board.pieces(piece, chess.WHITE):
+                tensor[i + 12, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+            # Encode black pieces (channels 18-23)
+            for sq in board.pieces(piece, chess.BLACK):
+                tensor[i + 18, chess.square_rank(sq), chess.square_file(sq)] = 1.0
+
+        # Layer 24: Whose turn (White=1, Black=0)
+        if board.turn == chess.WHITE:
+            tensor[24, :, :] = 1.0
+
+        return torch.tensor(tensor, dtype=torch.float32).unsqueeze(0)

@@ -1,141 +1,160 @@
 """
-Database migration script to add evaluation_change column.
-This script adds the missing evaluation_change column to the existing moves table.
+Database migration script for unified model with lookahead support.
+
+This script updates the database schema to support:
+1. Lookahead data in self_play_moves table
+2. New move_sequences table for storing lookahead sequences
 """
 
 import sqlite3
 import sys
 from pathlib import Path
 
-DB_PATH = "chess_bot.db"
+sys.path.insert(0, str(Path(__file__).parent))
 
 
-def add_evaluation_change_column(db_path: str) -> bool:
+def migrate_database(db_path: str = "chess_bot.db"):
     """
-    Add evaluation_change column to the moves table if it doesn't exist.
-    
+    Apply database migrations for unified model support.
+
     Args:
-        db_path: Path to the SQLite database
-        
-    Returns:
-        True if column was added, False if it already exists or error occurred
+        db_path: Path to the SQLite database file
     """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    print("Starting database migration...")
+
+    # Migration 1: Add lookahead columns to self_play_moves table
+    print("Migration 1: Adding lookahead columns to self_play_moves...")
+    
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Check if column already exists
+        cursor.execute("""
+            ALTER TABLE self_play_moves 
+            ADD COLUMN lookahead_depth INTEGER
+        """)
+        print("  ✓ Added lookahead_depth column")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e).lower():
+            print("  - lookahead_depth column already exists")
+        else:
+            raise
+
+    try:
+        cursor.execute("""
+            ALTER TABLE self_play_moves 
+            ADD COLUMN future_moves TEXT
+        """)
+        print("  ✓ Added future_moves column")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e).lower():
+            print("  - future_moves column already exists")
+        else:
+            raise
+
+    try:
+        cursor.execute("""
+            ALTER TABLE self_play_moves 
+            ADD COLUMN final_classification TEXT
+        """)
+        print("  ✓ Added final_classification column")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e).lower():
+            print("  - final_classification column already exists")
+        else:
+            raise
+
+    try:
+        cursor.execute("""
+            ALTER TABLE self_play_moves 
+            ADD COLUMN move_sequence_classes TEXT
+        """)
+        print("  ✓ Added move_sequence_classes column")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e).lower():
+            print("  - move_sequence_classes column already exists")
+        else:
+            raise
+
+    # Migration 2: Create move_sequences table for lookahead data
+    print("\nMigration 2: Creating move_sequences table...")
+    
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS move_sequences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                move_number INTEGER NOT NULL,
+                fen_before TEXT,
+                move_san TEXT,
+                lookahead_depth INTEGER,
+                future_moves TEXT,
+                final_evaluation REAL,
+                final_classification TEXT,
+                move_sequence_classes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+            )
+        """)
+        print("  ✓ Created move_sequences table")
+    except sqlite3.OperationalError as e:
+        print(f"  - Table may already exist: {e}")
+
+    # Migration 3: Create indexes for move_sequences
+    print("\nMigration 3: Creating indexes...")
+    
+    try:
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_move_sequences_game_id 
+            ON move_sequences (game_id)
+        """)
+        print("  ✓ Created index on game_id")
+    except sqlite3.OperationalError as e:
+        print(f"  - Index may already exist: {e}")
+
+    try:
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_move_sequences_classification 
+            ON move_sequences (final_classification)
+        """)
+        print("  ✓ Created index on final_classification")
+    except sqlite3.OperationalError as e:
+        print(f"  - Index may already exist: {e}")
+
+    # Migration 4: Add evaluation_change column to moves table (if not exists)
+    print("\nMigration 4: Checking moves table columns...")
+    
+    try:
         cursor.execute("PRAGMA table_info(moves)")
         columns = [row[1] for row in cursor.fetchall()]
         
-        if "evaluation_change" in columns:
-            print("Column 'evaluation_change' already exists in moves table.")
-            conn.close()
-            return True
-        
-        # Add the column
-        cursor.execute("""
-            ALTER TABLE moves
-            ADD COLUMN evaluation_change REAL DEFAULT 0.0
-        """)
-        
-        conn.commit()
-        print(f"Successfully added 'evaluation_change' column to moves table in {db_path}")
-        conn.close()
-        return True
-        
+        if 'evaluation_change' not in columns:
+            cursor.execute("""
+                ALTER TABLE moves 
+                ADD COLUMN evaluation_change REAL
+            """)
+            print("  ✓ Added evaluation_change column")
+        else:
+            print("  - evaluation_change column already exists")
     except sqlite3.OperationalError as e:
-        print(f"Error: {e}")
-        return False
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        return False
+        print(f"  - Column may already exist: {e}")
+
+    conn.commit()
+    conn.close()
+
+    print("\n✓ Database migration completed successfully!")
 
 
-def calculate_evaluation_changes(db_path: str) -> int:
-    """
-    Calculate evaluation_change for each move (evaluation_after - evaluation_before).
-    Requires chess module to be installed.
+def main():
+    """Run the database migration."""
+    import argparse
     
-    Args:
-        db_path: Path to the SQLite database
-        
-    Returns:
-        Number of rows updated
-    """
-    try:
-        import chess
-    except ImportError:
-        print("chess module not installed. Skipping evaluation change calculation.")
-        return 0
-        
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Get all moves with their evaluations
-        cursor.execute("""
-            SELECT id, game_id, move_number, fen_before, fen_after, evaluation
-            FROM moves
-            WHERE evaluation_change IS NULL OR evaluation_change = 0
-        """)
-        
-        moves = cursor.fetchall()
-        updated_count = 0
-        
-        for move in moves:
-            move_id, game_id, move_number, fen_before, fen_after, evaluation = move
-            
-            try:
-                board_before = chess.Board(fen_before)
-                
-                # Calculate evaluation change using score() method
-                # score() returns a Score object with white_score and black_score
-                # For simplicity, we use white_score as the evaluation
-                score = board_before.score()
-                eval_before = score.white_score if score.white_score else 0
-                
-                # Calculate evaluation change
-                eval_change = evaluation - eval_before
-                
-                # Update the row
-                cursor.execute("""
-                    UPDATE moves
-                    SET evaluation_change = ?
-                    WHERE id = ?
-                """, (eval_change, move_id))
-                
-                updated_count += 1
-                
-            except Exception as e:
-                # Skip moves that can't be parsed
-                continue
-        
-        conn.commit()
-        print(f"Updated evaluation_change for {updated_count} moves")
-        conn.close()
-        return updated_count
-        
-    except Exception as e:
-        print(f"Error calculating evaluation changes: {e}")
-        return 0
+    parser = argparse.ArgumentParser(description="Migrate chess bot database for unified model")
+    parser.add_argument("--db", default="chess_bot.db", help="Path to database file")
+    args = parser.parse_args()
+    
+    migrate_database(args.db)
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Chess Database Migration Script")
-    print("=" * 60)
-    
-    # Add the missing column
-    print("\n[1/2] Adding evaluation_change column...")
-    success = add_evaluation_change_column(DB_PATH)
-    
-    if success:
-        # Calculate evaluation changes
-        print("\n[2/2] Calculating evaluation_change values...")
-        updated = calculate_evaluation_changes(DB_PATH)
-        print(f"\nTotal moves updated: {updated}")
-    else:
-        print("\nMigration failed. Skipping evaluation change calculation.")
-    
-    print("\nMigration complete!")
+    main()
