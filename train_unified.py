@@ -1,31 +1,5 @@
 """
-Unified Training Script for Chess Neural Network
-
-This script provides a complete training pipeline for the UnifiedMoveClassifierNet model.
-It supports two training modes:
-
-1. SUPERVISED TRAINING: Train on existing Stockfish games from the database
-2. SELF-PLAY RL TRAINING: Generate self-play games and train with MCTS
-
-Training Pipeline:
-1. Load existing games from chess_bot.db (99k+ games with Stockfish evaluations)
-2. Calculate evaluation delta for each move
-3. Assign move quality classes based on delta thresholds
-4. Train UnifiedMoveClassifierNet with 3 heads:
-   - Classification head (6 classes)
-   - Value head (-1 to 1)
-   - Policy head (64 moves)
-5. Optionally continue with self-play RL training
-
-Usage:
-    # Supervised training only
-    python train_unified.py --mode supervised --epochs 10 --batch-size 256
-
-    # Self-play RL training
-    python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800
-
-    # Combined: supervised first, then RL
-    python train_unified.py --mode combined --supervised-epochs 5 --rl-iterations 3
+Unified Training Script for Chess Neural Network - OPTION A (Lookahead via Value)
 """
 
 import sys
@@ -45,18 +19,16 @@ import argparse
 import random
 import time
 from collections import Counter
-from datetime import datetime
 from classifiers.self_play_dataset import ChessSelfPlayDataset
 from models.unified_chess_nets import UnifiedMoveClassifierNet, ChessCoreNet
-from classifiers.classification_config import CLASS_NAMES, THRESHOLDS
 from engine.rl_trainer import run_self_play_session, init_self_play_db, apply_sliding_window
 
 
 class ChessMoveDataset(Dataset):
     """
-    PyTorch Dataset for loading chess moves from SQLite database with Stockfish evaluations.
+    PyTorch Dataset для загрузки ходов из SQLite.
+    Использует уже имеющуюся классификацию ходов для фильтрации Policy Head.
     """
-    
     def __init__(self, db_path="chess_bot.db", game_ids=None, sample_rate=1.0):
         self.samples = []
         self.db_path = db_path
@@ -67,78 +39,41 @@ class ChessMoveDataset(Dataset):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        print(f"Scanning database (Game filter: {self.game_ids is not None}, Sample rate: {sample_rate})...")
-        
-        cursor.execute("""
-            SELECT COUNT(*) FROM moves
-            WHERE fen_after IS NOT NULL AND fen_after != ''
-        """)
+        print(f"Scanning database (Sample rate: {sample_rate})...")
+        cursor.execute("SELECT COUNT(*) FROM moves WHERE fen_after IS NOT NULL AND fen_after != ''")
         total_moves = cursor.fetchone()[0]
         print(f"Total moves in database: {total_moves}")
         
         target_samples = int(total_moves * sample_rate) if sample_rate < 1.0 else total_moves
-        print(f"Target samples: {target_samples}")
         
+        # ЗАПРОС: Вытаскиваем уже готовую классификацию ходов из вашей базы!
         cursor.execute("""
-            SELECT game_id, fen_before, fen_after, evaluation
+            SELECT game_id, fen_before, fen_after, evaluation, classification
             FROM moves
             WHERE fen_after IS NOT NULL AND fen_after != ''
             ORDER BY game_id, id
         """)
         
-        prev_game_id = None
-        prev_eval = 0.3
         sample_counter = 0
-        
         while True:
             row = cursor.fetchone()
             if row is None:
                 break
                 
-            game_id, fen_before, fen_after, evaluation = row
+            game_id, fen_before, fen_after, evaluation, classification = row
             
-            if not fen_after:
+            if self.game_ids is not None and int(game_id) not in self.game_ids:
                 continue
             
-            try:
-                current_id = int(game_id)
-            except (ValueError, TypeError):
-                continue
+            current_eval = evaluation if evaluation is not None else 0.0
+            move_class = classification if classification else "Good"
             
-            if self.game_ids is not None and current_id not in self.game_ids:
-                continue
-            
-            if prev_game_id != current_id:
-                prev_game_id = current_id
-                prev_eval = 0.3 if evaluation is None else evaluation
-            
-            current_eval = evaluation if evaluation is not None else prev_eval
-            is_white = " w " in fen_before
-            
-            if is_white:
-                delta = prev_eval - current_eval
-            else:
-                delta = current_eval - prev_eval
-            
-            if abs(prev_eval) > 3.0:
-                delta = delta * 0.3
-            
-            if delta <= THRESHOLDS[0].max_evaluation:
-                class_idx = 0
-            else:
-                class_idx = 5
-                for idx, t in enumerate(THRESHOLDS):
-                    if t.min_evaluation <= delta < t.max_evaluation:
-                        class_idx = idx
-                        break
-            
-            self.samples.append((fen_before, fen_after, class_idx, current_eval))
-            
-            if target_samples < float('inf') and sample_counter >= target_samples:
-                break
+            # Сохраняем FEN-ы, оценку и уже готовый класс из вашей базы
+            self.samples.append((fen_before, fen_after, move_class, current_eval))
             
             sample_counter += 1
-            prev_eval = current_eval
+            if sample_counter >= target_samples:
+                break
         
         conn.close()
         print(f"Successfully loaded {len(self.samples)} moves into dataset")
@@ -147,452 +82,230 @@ class ChessMoveDataset(Dataset):
         return len(self.samples)
     
     def __getitem__(self, idx):
-        fen_before, fen_after, class_idx, evaluation = self.samples[idx]
+        fen_before, fen_after, move_class, evaluation = self.samples[idx]
         
         board_before = chess.Board(fen_before)
         board_after = chess.Board(fen_after)
         
-        played_move_to_square = 0
+        # ИСПРАВЛЕНИЕ: Точное определение стабильного индекса сделанного хода (от 0 до 4095)
+        played_move_idx = 0
         for move in board_before.legal_moves:
             board_before.push(move)
-            if board_before == board_after:
-                played_move_to_square = move.to_square
+            # Сравниваем только размещение фигур, отсекая шум в FEN
+            if board_before.fen().split()[0] == board_after.fen().split()[0]:
+                played_move_idx = move.from_square * 64 + move.to_square
                 board_before.pop()
                 break
             board_before.pop()
             
-        tensor = UnifiedMoveClassifierNet._board_to_tensor_static(board_before, board_after)
-        if tensor.ndim == 4 and tensor.size(0) == 1:
-            tensor = tensor.squeeze(0)
+        # Кодируем доску в 13 каналов (Вариант А)
+        tensor = UnifiedMoveClassifierNet.board_to_tensor(board_before)
             
-        value_target = np.clip(evaluation / 100.0, -1.0, 1.0)
+        # Масштабируем оценку centipawns в диапазон [-1, 1] без жесткого клиппинга
+        value_target = np.clip(evaluation / 300.0, -1.0, 1.0)
+        
+        # Использование вашей базы: выставляем веса для обучения Policy Head
+        if move_class in ["Best", "Excellent", "Good"]:
+            policy_weight = 1.0   # Идеальные ходы учим в полную силу
+        elif move_class == "Inaccuracy":
+            policy_weight = 0.2   # Неточности учим слабо
+        else:
+            policy_weight = 0.0   # Ошибки и Зевки (Mistake, Blunder) полностью игнорируем!
         
         return (
             tensor, 
-            torch.tensor(class_idx, dtype=torch.long), 
             torch.tensor(value_target, dtype=torch.float32),
-            torch.tensor(played_move_to_square, dtype=torch.long)
+            torch.tensor(played_move_idx, dtype=torch.long),
+            torch.tensor(policy_weight, dtype=torch.float32)
         )
 
 
 def train_supervised(
-    epochs=10,
-    batch_size=1024,
-    lr=1e-3,
-    alpha=0.5,
-    db_path="chess_bot.db",
-    sample_rate=1.0,
-    use_val_split=True,
-    val_ratio=0.1,
-    device="cpu"
+    epochs=10, batch_size=256, lr=1e-3, alpha=0.5, db_path="chess_bot.db",
+    sample_rate=1.0, use_val_split=True, val_ratio=0.1, device=None
 ):
-    """Train the unified model using supervised learning on existing Stockfish games."""
-    print("\n" + "="*60)
-    print("🎯 SUPERVISED TRAINING: Unified Model on Stockfish Games")
-    print("="*60)
-    
-    # Auto-detect GPU if available
-    if device is None or device == "cpu":
-        if torch.cuda.is_available():
-            device = "cuda"
-            print(f"🎮 CUDA detected! Using GPU for training")
-        else:
-            device = "cpu"
-            print("⚠️ CUDA not available, falling back to CPU")
+    """Обучение модели на имеющейся базе данных (Оценка + Фильтрованный Policy)."""
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
     print(f"📡 TARGET DEVICE: {device}")
     
-    dataset = ChessMoveDataset(db_path=db_path, device=device)
-    
+    dataset = ChessMoveDataset(db_path=db_path, sample_rate=sample_rate)
     if len(dataset) < 100:
-        print("⚠️ Too little data for training. Skipping...")
+        print("⚠️ Too little data. Skipping...")
         return None
-    
-    print(f"📊 Dataset size: {len(dataset)} samples")
-    
-    class_counts = Counter([s[2] for s in dataset.samples])
-    print(f"📈 Class distribution: {dict(class_counts)}")
-    
-    if use_val_split:
-        train_size = int(0.9 * len(dataset))
-        train_dataset, val_dataset = random_split(
-            dataset, [train_size, len(dataset) - train_size]
-        )
-        print(f"📊 Train: {len(train_dataset)}, Val: {len(val_dataset)}")
-    else:
-        train_dataset, val_dataset = dataset, None
-    
-    train_loader = None
-    val_loader = None
-
-    if use_val_split:
-        val_size = int(len(train_dataset) * val_ratio)
-        train_size = len(train_dataset) - val_size
-        train_sub, val_sub = random_split(train_dataset, [train_size, val_size])
         
-        train_loader = DataLoader(
-            train_sub, 
-            batch_size=batch_size, 
-            shuffle=True, 
-            num_workers=2,
-            pin_memory=True,
-            persistent_workers=True
-        )
-        val_loader = DataLoader(
-            val_sub, 
-            batch_size=batch_size, 
-            shuffle=False, 
-            num_workers=2, 
-            pin_memory=True,
-            persistent_workers=True
-        )
+    if use_val_split:
+        val_size = int(len(dataset) * val_ratio)
+        train_size = len(dataset) - val_size
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+        
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
     else:
-        train_loader = DataLoader(
-            train_dataset, 
-            batch_size=batch_size, 
-            shuffle=True, 
-            num_workers=2, 
-            pin_memory=True,
-            persistent_workers=True
-        )
+        train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
+        val_loader = None
     
-    core = ChessCoreNet(in_channels=25)
-    model = UnifiedMoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES), policy_output_dim=64)
+    # Модель создается строго с 13 входными каналами
+    core = ChessCoreNet(in_channels=13)
+    model = UnifiedMoveClassifierNet(core_net=core)
     
     weights_path = "models/weights_bot.pth"
     if os.path.exists(weights_path):
-        print(f"📦 Loading pre-trained weights from {weights_path}...")
+        print(f"📦 Loading pre-trained weights...")
         model.load_state_dict(torch.load(weights_path, map_location=device), strict=False)
     
     model.to(device)
-    model.train()
     
-    class_counts = [60901, 12270, 121946, 3689039, 1749495, 949327]
-    total_samples = sum(class_counts)
-    weights = [total_samples / (len(class_counts) * count) for count in class_counts]
-    class_weights_tensor = torch.tensor(weights, dtype=torch.float32).to(device)
-
-    criterion_class = nn.CrossEntropyLoss(weight=class_weights_tensor)
     criterion_value = nn.MSELoss()
-    
+    criterion_policy_raw = nn.CrossEntropyLoss(reduction='none') # Попиксельный лосс для применения маски
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
-    
-    best_val_loss = float('inf')
-    best_model_state = None
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
     
     for epoch in range(epochs):
         model.train()
-        total_loss = 0
-        correct_preds = 0
-        total_preds = 0
+        total_loss, total_val_loss = 0, 0
         
         progress_bar = tqdm(train_loader, desc=f"   Epoch {epoch+1}/{epochs}", leave=True)
-        
-        for inputs, class_targets, value_targets, policy_targets in progress_bar:
+        for inputs, value_targets, policy_targets, policy_weights in progress_bar:
             inputs = inputs.to(device, non_blocking=True)
-            class_targets = class_targets.to(device, non_blocking=True)
             value_targets = value_targets.to(device, non_blocking=True)
             policy_targets = policy_targets.to(device, non_blocking=True)
+            policy_weights = policy_weights.to(device, non_blocking=True)
             
             optimizer.zero_grad()
             
-            class_logits, value_preds, policy_logits = model(inputs)
+            # class_logits игнорируем (Вариант А)
+            _, value_preds, policy_logits = model(inputs)
             
-            loss_class = criterion_class(class_logits, class_targets)
+            # 1. Лосс оценки (MSE)
             loss_value = criterion_value(value_preds.view(-1), value_targets.view(-1))
             
-            loss_policy = nn.CrossEntropyLoss()(policy_logits, policy_targets)
+            loss_policy = (loss_p_unweighted * policy_weights).sum() / (policy_weights.sum() + 1e-8)
             
-            loss = loss_class + (0.5 * loss_value) + (1.0 * loss_policy)
+            # Общий лосс
+            loss = (alpha * loss_value) + loss_policy
             
             loss.backward()
-            
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             
             total_loss += loss.item()
-            correct_preds += (class_logits.argmax(dim=1) == class_targets).sum().item()
-            total_preds += class_targets.size(0)
+            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}", "ValLoss": f"{loss_value.item():.4f}", "PolLoss": f"{loss_policy.item():.4f}"})
             
-            progress_bar.set_postfix({
-                "Loss": f"{loss.item():.4f}",
-                "ClassAcc": f"{correct_preds/total_preds:.2%}"
-            })
-        
-        avg_train_loss = total_loss / len(train_loader)
-        train_acc = correct_preds / total_preds
-        
-        val_loss = 0
-        val_correct = 0
-        val_total = 0
-        
+        # Валидация
         if val_loader:
             model.eval()
             with torch.no_grad():
-                val_batch_idx = 0
-                for inputs, class_targets, value_targets, policy_targets in val_loader:
+                for inputs, value_targets, policy_targets, policy_weights in val_loader:
                     inputs = inputs.to(device, non_blocking=True)
-                    class_targets = class_targets.to(device, non_blocking=True)
                     value_targets = value_targets.to(device, non_blocking=True)
                     policy_targets = policy_targets.to(device, non_blocking=True)
+                    policy_weights = policy_weights.to(device, non_blocking=True)
                     
-                    class_logits, value_preds, policy_logits = model(inputs)
-                    
-                    loss_class = criterion_class(class_logits, class_targets)
+                    _, value_preds, policy_logits = model(inputs)
                     loss_value = criterion_value(value_preds.view(-1), value_targets.view(-1))
-                    loss_policy = nn.CrossEntropyLoss()(policy_logits, policy_targets)
+                    loss_p_unweighted = criterion_policy_raw(policy_logits, policy_targets)
+                    loss_policy = (loss_p_unweighted * policy_weights).mean()
                     
-                    val_loss += (loss_class + alpha * loss_value + loss_policy).item()
-
-                    val_correct += (class_logits.argmax(dim=1) == class_targets).sum().item()
-                    val_total += class_targets.size(0)
-                    val_batch_idx += 1
+                    total_val_loss += ((alpha * loss_value) + loss_policy).item()
             
-            avg_val_loss = val_loss / len(val_loader)
-            val_acc = val_correct / val_total
+            avg_val_loss = total_val_loss / len(val_loader)
+            print(f"  Train Loss: {total_loss/len(train_loader):.4f} | Val Loss: {avg_val_loss:.4f}")
             scheduler.step(avg_val_loss)
-        else:
-            avg_val_loss = None
-            val_acc = None
-        
-        if avg_val_loss is not None and avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            best_model_state = model.state_dict().copy()
-        
-        print(f"  Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.2%}")
-        if avg_val_loss is not None:
-            print(f"  Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.2%}")
-    
-    if best_model_state:
-        model.load_state_dict(best_model_state)
-    
+            
     torch.save(model.state_dict(), weights_path)
     print(f"✅ Unified model weights saved to {weights_path}")
-    
-    final_distribution = {0: 60901, 1: 12270, 2: 121946, 3: 3689039, 4: 1749495, 5: 949327}
-
-    stats = {
-        "epochs": epochs, "batch_size": batch_size, "lr": lr, "alpha": alpha,
-        "dataset_size": len(dataset),
-        "train_size": len(train_dataset) if use_val_split else len(dataset),
-        "val_size": len(val_dataset) if use_val_split else 0,
-        "best_val_loss": best_val_loss,
-        "class_distribution": final_distribution
-    }
-    
-    stats_path = "models/training_stats.json"
-    with open(stats_path, 'w') as f:
-        json.dump(stats, f, indent=2)
-    print(f"📊 Training statistics saved to {stats_path}")
-    
-    return stats
 
 
-def run_rl_training(
-    iterations=5,
-    games_per_iter=10,
-    sims=800,
-    epochs=3,
-    keep_last_n=1000,
-    db_path="chess_bot.db",
-    temperature=1.2,
-    num_workers=1,
-    bot_weights="models/weights_bot.pth",
-    device=None  # Auto-detect GPU
-):
-    """Run self-play RL training loop."""
-    print("\n" + "="*60)
-    print("🎯 SELF-PLAY RL TRAINING")
-    print("="*60)
-    
-    init_self_play_db(db_path)
-    print(f"\n🚀 STARTING RL TRAINING FOR {iterations} ITERATIONS")
-    
-    if not os.path.exists(bot_weights):
-        if os.path.exists("models/weights_classifier.pth"):
-            shutil.copy("models/weights_classifier.pth", bot_weights)
-            print(f"📦 Base weights copied from weights_classifier.pth to {bot_weights}")
-        else:
-            print(f"⚠️ Warning: {bot_weights} not found. Training will start from scratch!")
-    
-    for i in range(iterations):
-        print(f"\n{'='*50}\n🌟 ITERATION {i+1}/{iterations}\n{'='*50}")
-        
-        run_self_play_session(num_games=games_per_iter, num_simulations=sims,
-                              temperature=temperature, db_path=db_path,
-                              bot_weights=bot_weights, num_workers=num_workers)
-        
-        train_unified_model(epochs=epochs, batch_size=64, lr=1e-3, alpha=0.5,
-                            policy_weight=1.0, db_path=db_path, device=device)
-        
-        apply_sliding_window(db_path, keep_last_n_games=keep_last_n)
-
-
-def train_unified_model(epochs=3, batch_size=64, lr=1e-3, alpha=0.5,
-                        policy_weight=1.0, db_path="chess_bot.db", device="cpu"):
-    """Train the unified model with lookahead data."""
-    print("\n" + "-"*40)
-    print("🧠 PHASE 2: UNIFIED MODEL TRAINING (RL + Policy)")
-    print("-" * 40)
-    
-    # Auto-detect GPU if available
+def train_unified_model(epochs=3, batch_size=64, lr=1e-3, alpha=0.5, policy_weight=1.0, db_path="chess_bot.db", device="cpu"):
+    """Дополнительная фаза тренировки Lookahead данных (RL Self-Play)."""
     if device is None:
-        if torch.cuda.is_available():
-            device = "cuda"
-            print(f"🎮 CUDA detected! Using GPU for training")
-        else:
-            device = "cpu"
-            print("⚠️ CUDA not available, falling back to CPU")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
-    print(f"📡 TARGET DEVICE: {device}")
     
-    print("Chess self play dataset loading...")
     dataset = ChessSelfPlayDataset(db_path=db_path)
-    
     if len(dataset) < 50:
-        print("⚠️ Too little data for training. Skipping...")
         return
+        
+    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
     
-    train_size = int(0.9 * len(dataset))
-    train_dataset, val_dataset = random_split(dataset, [train_size, len(dataset) - train_size])
-    
-    train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, pin_memory=(device.type == "cuda")
-    )
-    
-    core = ChessCoreNet(in_channels=25)
-    model = UnifiedMoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES), policy_output_dim=64)
+    core = ChessCoreNet(in_channels=13)
+    model = UnifiedMoveClassifierNet(core_net=core)
     
     weights_path = "models/weights_bot.pth"
     if os.path.exists(weights_path):
         model.load_state_dict(torch.load(weights_path, map_location=device), strict=False)
-    
     model.to(device)
     
-    criterion_class = nn.CrossEntropyLoss()
     criterion_value = nn.MSELoss()
-    
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     
     for epoch in range(epochs):
         model.train()
-        total_loss = 0
-        
-        progress_bar = tqdm(train_loader, desc=f"   Epoch {epoch+1}/{epochs}", leave=True)
-        batch_idx = 0
-        
-        for batch in progress_bar:
-            inputs, class_targets, value_targets, *_ = batch
+        for batch in train_loader:
+            inputs, _, value_targets, *_ = batch # Игнорируем старые таргеты классов
             
             inputs = inputs.to(device, non_blocking=True)
-            class_targets = class_targets.to(device, non_blocking=True)
             value_targets = value_targets.to(device, non_blocking=True)
             
+            # Превращаем в 4096-размерный плейсхолдер для совместимости с MCTS логикой самоигры
             current_batch_size = inputs.size(0)
-            policy_targets = torch.ones((current_batch_size, 64), dtype=torch.float32, device=device) / 64.0
+            policy_targets = torch.ones((current_batch_size, 4096), dtype=torch.float32, device=device) / 4096.0
             
             optimizer.zero_grad()
-            class_logits, value_preds, policy_logits = model(inputs)
+            _, value_preds, policy_logits = model(inputs)
             
-            loss_class = criterion_class(class_logits, class_targets)
             loss_value = criterion_value(value_preds.view(-1), value_targets.view(-1))
             loss_policy = nn.CrossEntropyLoss()(policy_logits, policy_targets)
             
-            loss = loss_class + (alpha * loss_value) + (policy_weight * loss_policy)
-            
+            loss = (alpha * loss_value) + (policy_weight * loss_policy)
             loss.backward()
             optimizer.step()
             
-            batch_idx += 1
-            total_loss += loss.item()
-            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
-    
     torch.save(model.state_dict(), weights_path)
-    print(f"✅ Unified model weights saved to {weights_path}")
+
+
+def run_rl_training(iterations=5, games_per_iter=10, sims=800, epochs=3, keep_last_n=1000, db_path="chess_bot.db", temperature=1.2, num_workers=1, bot_weights="models/weights_bot.pth", device=None):
+    init_self_play_db(db_path)
+    for i in range(iterations):
+        print(f"\n🌟 RL ITERATION {i+1}/{iterations}")
+        run_self_play_session(num_games=games_per_iter, num_simulations=sims, temperature=temperature, db_path=db_path, bot_weights=bot_weights, num_workers=num_workers)
+        train_unified_model(epochs=epochs, batch_size=64, lr=1e-3, alpha=0.5, policy_weight=1.0, db_path=db_path, device=device)
+        apply_sliding_window(db_path, keep_last_n_games=keep_last_n)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Train unified chess model")
-    parser.add_argument("--mode", type=str, default="supervised",
-                        choices=["supervised", "rl", "combined"],
-                        help="Training mode: supervised, rl, or combined")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=256, help="Batch size")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--alpha", type=float, default=0.5, help="Value loss weight")
-    parser.add_argument("--sample-rate", type=float, default=1.0, help="Data sample rate")
-    parser.add_argument("--no-val", action="store_true", help="Disable validation split")
-    parser.add_argument("--val-ratio", type=float, default=0.1, help="Validation ratio")
+    parser.add_argument("--mode", type=str, default="supervised", choices=["supervised", "rl", "combined"])
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--sample-rate", type=float, default=1.0)
+    parser.add_argument("--no-val", action="store_true")
+    parser.add_argument("--val-ratio", type=float, default=0.1)
     
-    # RL training parameters
-    parser.add_argument("--iterations", type=int, default=5, help="RL iterations")
-    parser.add_argument("--games-per-iter", type=int, default=10, help="Games per iteration")
-    parser.add_argument("--sims", type=int, default=800, help="MCTS simulations")
-    parser.add_argument("--keep-last-n", type=int, default=1000, help="Games to keep")
-    parser.add_argument("--temperature", type=float, default=1.2, help="Temperature")
-    parser.add_argument("--num-workers", type=int, default=1, help="Workers")
+    parser.add_argument("--iterations", type=int, default=5)
+    parser.add_argument("--games-per-iter", type=int, default=10)
+    parser.add_argument("--sims", type=int, default=800)
+    parser.add_argument("--keep-last-n", type=int, default=1000)
+    parser.add_argument("--temperature", type=float, default=1.2)
+    parser.add_argument("--num-workers", type=int, default=1)
     
     args = parser.parse_args()
     
-    if args.mode == "supervised":
+    if args.mode == "supervised" or args.mode == "combined":
         train_supervised(
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            alpha=args.alpha,
-            sample_rate=args.sample_rate,
-            use_val_split=not args.no_val,
-            val_ratio=args.val_ratio,
-            device=None  # Auto-detect GPU
+            epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, alpha=args.alpha,
+            sample_rate=args.sample_rate, use_val_split=not args.no_val, val_ratio=args.val_ratio
         )
     
-    elif args.mode == "rl":
+    if args.mode == "rl" or args.mode == "combined":
         run_rl_training(
-            iterations=args.iterations,
-            games_per_iter=args.games_per_iter,
-            sims=args.sims,
-            epochs=args.epochs,
-            keep_last_n=args.keep_last_n,
-            temperature=args.temperature,
-            num_workers=args.num_workers,
-            device=None  # Auto-detect GPU
+            iterations=args.iterations, games_per_iter=args.games_per_iter, sims=args.sims,
+            epochs=args.epochs, keep_last_n=args.keep_last_n, temperature=args.temperature, num_workers=args.num_workers
         )
-    
-    elif args.mode == "combined":
-        print("\n" + "="*60)
-        print("🚀 COMBINED TRAINING: Supervised + RL")
-        print("="*60)
-        
-        print("\n📚 PHASE 1: Supervised Training on Stockfish Games")
-        train_supervised(
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            alpha=args.alpha,
-            sample_rate=args.sample_rate,
-            use_val_split=not args.no_val,
-            val_ratio=args.val_ratio,
-            device=None  # Auto-detect GPU
-        )
-        
-        print("\n🎮 PHASE 2: Self-Play RL Training")
-        run_rl_training(
-            iterations=args.iterations,
-            games_per_iter=args.games_per_iter,
-            sims=args.sims,
-            epochs=args.epochs,
-            keep_last_n=args.keep_last_n,
-            temperature=args.temperature,
-            num_workers=args.num_workers,
-            device=None  # Auto-detect GPU
-        )
-    
-    print("\n" + "="*60)
-    print("✅ TRAINING COMPLETE")
-    print("="*60)
-
 
 if __name__ == "__main__":
-    import shutil
     main()
