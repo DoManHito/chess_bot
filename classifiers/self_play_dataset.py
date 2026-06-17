@@ -64,24 +64,36 @@ class ChessSelfPlayDataset(Dataset):
         board = chess.Board(sample["fen"])
         value_target = torch.tensor(sample["value"], dtype=torch.float32)
 
-        # Convert board state to 13-channel tensor (matches inference architecture)
         input_tensor = UnifiedMoveClassifierNet.board_to_tensor(board)
 
-        # Extract MCTS policy distribution
         policy_dict = sample["policy_dict"]
-        class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
+        policy_target = np.zeros(4096, dtype=np.float32)
 
-        for i, class_name in enumerate(CLASS_NAMES):
-            class_target_distribution[i] = policy_dict.get(class_name, 0.0)
+        if policy_dict:
+            for uci, prob in policy_dict.items():
+                try:
+                    move = chess.Move.from_uci(uci)
+                    move_idx = move.from_square * 64 + move.to_square
+                    policy_target[move_idx] = prob
+                except Exception:
+                    continue
 
-        # Normalize distribution if sum is too small (fallback to uniform)
-        sum_dist = class_target_distribution.sum()
-        if sum_dist <= 0:
-            class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
+        sum_dist = policy_target.sum()
+        if sum_dist > 0:
+            policy_target /= sum_dist
+        else:
+            legal_moves = list(board.legal_moves)
+            if legal_moves:
+                for move in legal_moves:
+                    move_idx = move.from_square * 64 + move.to_square
+                    policy_target[move_idx] = 1.0 / len(legal_moves)
+            else:
+                policy_target = np.ones(4096, dtype=np.float32) / 4096.0
 
-        # Create uniform policy target distribution (64 actions)
-        policy_target = np.ones(64, dtype=np.float32) / 64.0
         policy_target_tensor = torch.from_numpy(policy_target)
+
+        class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
+        class_target_distribution[2] = 1.0
 
         return input_tensor, torch.from_numpy(class_target_distribution), value_target, policy_target_tensor
 
@@ -157,7 +169,6 @@ class LookaheadChessSelfPlayDataset(Dataset):
         rows = cursor.fetchall()
         conn.close()
 
-        # Parse each row into a sample dictionary
         for fen_before, move_uci, mcts_policy_json, result_value, lookahead_depth, future_moves, final_classification, move_sequence_classes in rows:
             sample = {
                 "fen": fen_before,
@@ -166,7 +177,6 @@ class LookaheadChessSelfPlayDataset(Dataset):
                 "value": float(result_value) if result_value else 0.0
             }
             
-            # Add lookahead data if present
             if lookahead_depth and future_moves:
                 sample["lookahead_depth"] = int(lookahead_depth)
                 sample["future_moves"] = json.loads(future_moves) if future_moves else []
@@ -187,27 +197,40 @@ class LookaheadChessSelfPlayDataset(Dataset):
         board = chess.Board(sample["fen"])
         value_target = torch.tensor(sample["value"], dtype=torch.float32)
 
-        # Convert board state to 13-channel tensor (matches inference architecture)
         input_tensor = UnifiedMoveClassifierNet.board_to_tensor(board)
 
-        # Extract MCTS policy distribution
         policy_dict = sample["policy_dict"]
-        class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
+        policy_target = np.zeros(4096, dtype=np.float32)
 
-        for i, class_name in enumerate(CLASS_NAMES):
-            class_target_distribution[i] = policy_dict.get(class_name, 0.0)
+        if policy_dict:
+            for uci, prob in policy_dict.items():
+                try:
+                    move = chess.Move.from_uci(uci)
+                    move_idx = move.from_square * 64 + move.to_square
+                    policy_target[move_idx] = prob
+                except Exception:
+                    continue
 
-        # Normalize distribution if sum is too small (fallback to uniform)
-        sum_dist = class_target_distribution.sum()
-        if sum_dist <= 0:
-            class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
+        sum_dist = policy_target.sum()
+        if sum_dist > 0:
+            policy_target /= sum_dist
+        else:
+            legal_moves = list(board.legal_moves)
+            if legal_moves:
+                for move in legal_moves:
+                    move_idx = move.from_square * 64 + move.to_square
+                    policy_target[move_idx] = 1.0 / len(legal_moves)
+            else:
+                policy_target = np.ones(4096, dtype=np.float32) / 4096.0
 
-        policy_target = np.ones(64, dtype=np.float32) / 64.0
         policy_target_tensor = torch.from_numpy(policy_target)
 
+        class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
+        class_target_distribution[2] = 1.0
+
         return (
-            input_tensor,                             # inputs
-            torch.from_numpy(class_target_distribution), # class_targets
-            value_target,                             # value_targets
-            policy_target_tensor                      # policy_targets
+            input_tensor,
+            torch.from_numpy(class_target_distribution),
+            value_target,
+            policy_target_tensor
         )

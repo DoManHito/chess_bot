@@ -4,6 +4,8 @@ stockfish-ubuntu-x86-64-avx2
 stockfish
 .vscode
 settings.json
+weights_bot copy.pth
+weights_bot copy 2.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
