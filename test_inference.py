@@ -85,7 +85,7 @@ def test_nuances():
     # Test 1: Пассивный ход h6 в Сицилианке (Stockfish: Inaccuracy)
     board1 = chess.Board("rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2")
     move1 = board1.parse_san("h6")
-    res1, _ = classifier.classify_move(board1.fen(), "h6", evaluation=-40, turn_num=2, turn_label="Black")
+    res1 = classifier.classify_move(board1.fen(), "h6", evaluation=-40, turn_num=2, turn_label="Black")    
     ideal1 = get_stockfish_verdict(board1, move1)
     print_res("Test 1: Passive h6 in Sicilian", "h6", res1, ideal1)
     
@@ -95,7 +95,7 @@ def test_nuances():
     # Ой, после Qf7 мат уже поставлен! Возьмем позицию за ход до мата:
     board2 = chess.Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR b KQkq - 3 3")
     move2 = board2.parse_san("a6") # Игнорируем угрозу мата на f7
-    res2, _ = classifier.classify_move(board2.fen(), "a6", evaluation=-9900, turn_num=3, turn_label="Black")
+    res2 = classifier.classify_move(board2.fen(), "a6", evaluation=-9900, turn_num=3, turn_label="Black")
     ideal2 = get_stockfish_verdict(board2, move2)
     print_res("Test 2: Allowing Mate in 1", "a6", res2, ideal2)
     
@@ -103,14 +103,14 @@ def test_nuances():
     # Белый слон на c4 напрямую атакует черного ферзя на f7 (допустим, ферзь туда встал).
     board3 = chess.Board("rnb1kbnr/ppp2qpp/3p4/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 4")
     move3 = board3.parse_san("h6") # Вместо спасения ферзя просто ходим пешкой
-    res3, _ = classifier.classify_move(board3.fen(), "h6", evaluation=-900, turn_num=4, turn_label="Black")
+    res3 = classifier.classify_move(board3.fen(), "h6", evaluation=-900, turn_num=4, turn_label="Black")
     ideal3 = get_stockfish_verdict(board3, move3)
     print_res("Test 3: Hanging Queen", "h6", res3, ideal3)
     
     # Test 4: Теория Найдорфа a6 (Stockfish: Best)
     board4 = chess.Board("rnbqkbnr/pp2pppp/3p4/8/3NP3/2N5/PPP2PPP/R1BQKB1R b KQkq - 0 5")
     move4 = board4.parse_san("a6")
-    res4, _ = classifier.classify_move(board4.fen(), "a6", evaluation=30, turn_num=5, turn_label="Black")
+    res4 = classifier.classify_move(board4.fen(), "a6", evaluation=30, turn_num=5, turn_label="Black")
     ideal4 = get_stockfish_verdict(board4, move4)
     print_res("Test 4: Najdorf Theory 5... a6", "a6", res4, ideal4)
     

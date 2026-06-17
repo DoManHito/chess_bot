@@ -89,7 +89,7 @@ python server.py
 Generate self-play games and train with MCTS:
 
 ```bash
-python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800 --epochs 3 --num-workers 2
+python train_unified.py --mode supervised --epochs 10 --batch-size 2048 --lr 1e-3 --alpha 0.5 --num-workers 12
 ```
 
 Options:
