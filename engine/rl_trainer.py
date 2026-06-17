@@ -21,16 +21,6 @@ from classifiers.self_play_dataset import ChessSelfPlayDataset, LookaheadChessSe
 
 
 def init_self_play_db(db_path: str):
-    """
-    Initialize the self-play database with lookahead support.
-
-    Creates the self_play_moves table if it doesn't exist. This table stores
-    positions generated during self-play training, including FEN strings,
-    MCTS policies, and evaluation values.
-
-    Args:
-        db_path: Path to the SQLite database file
-    """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -70,26 +60,6 @@ def get_next_game_id(db_path: str) -> int:
 
 
 def play_one_game_with_lookahead(game_id, bot_weights, num_simulations, temperature, db_path, lookahead_depth=2):
-    """
-    Play a single self-play game using MCTS and save the experience with lookahead data.
-
-    This function:
-    1. Initializes an MCTS engine with the bot's neural network
-    2. Plays a game move-by-move, using MCTS to select moves
-    3. For each move, collects MCTS visit counts and uses them as a policy
-    4. Applies temperature scaling to add exploration
-    5. Uses the neural network to classify all legal moves and build a policy
-    6. Generates lookahead sequences for training
-    7. Saves each position with its policy, evaluation value, and lookahead data
-
-    Args:
-        game_id: Unique identifier for this game
-        bot_weights: Path to the bot's neural network weights
-        num_simulations: Number of MCTS simulations per position
-        temperature: Temperature for move selection (higher = more exploration)
-        db_path: Path to the SQLite database
-        lookahead_depth: Depth of lookahead sequences to generate
-    """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -213,20 +183,6 @@ def play_one_game_with_lookahead(game_id, bot_weights, num_simulations, temperat
 
 
 def generate_lookahead_sequences(board, moves_san, mcts_probs, moves_uci_list, lookahead_depth, evaluator):
-    """
-    Generate lookahead sequences for a given position.
-
-    Args:
-        board: Current chess board
-        moves_san: List of legal moves in SAN notation
-        mcts_probs: MCTS probabilities for each move (indexed by position in moves_uci_list)
-        moves_uci_list: List of UCI moves that MCTS explored
-        lookahead_depth: How many moves ahead to look
-        evaluator: Move classifier for evaluating moves
-
-    Returns:
-        dict with lookahead sequence data
-    """
     if lookahead_depth <= 0:
         return None
 
@@ -315,18 +271,6 @@ def generate_lookahead_sequences(board, moves_san, mcts_probs, moves_uci_list, l
 
 def run_self_play_session(num_games: int, num_simulations: int, temperature: float,
                           db_path: str, bot_weights: str, num_workers: int, lookahead_depth: int = 2):
-    """
-    Run a self-play session generating multiple games with lookahead data.
-
-    Args:
-        num_games: Number of games to generate
-        num_simulations: MCTS simulations per position
-        temperature: Temperature for move selection
-        db_path: Path to the SQLite database
-        bot_weights: Path to bot's neural network weights
-        num_workers: Number of parallel workers (1 = synchronous)
-        lookahead_depth: Depth of lookahead sequences to generate
-    """
     print(f"\n----------------------------------------")
     print(f"🎮 PHASE 1: SELF-PLAY GAME GENERATION ({num_games} games)")
     print(f"----------------------------------------")
@@ -349,19 +293,6 @@ def run_self_play_session(num_games: int, num_simulations: int, temperature: flo
 
 
 def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, policy_weight: float, db_path: str, use_lookahead: bool = False, use_stockfish_policy: bool = False):
-    """
-    Train the unified model with classification, value, and policy heads.
-
-    Args:
-        epochs: Number of training epochs
-        batch_size: Batch size for training
-        lr: Learning rate
-        alpha: Weight for value loss
-        policy_weight: Weight for policy loss
-        db_path: Path to the SQLite database
-        use_lookahead: Whether to use lookahead data for training
-        use_stockfish_policy: Whether to use Stockfish policy data for training
-    """
     print("\n" + "-"*40)
     print("🧠 PHASE 2: UNIFIED MODEL TRAINING (RL + Policy)")
     print("-" * 40)
@@ -466,13 +397,6 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
 
 
 def apply_sliding_window(db_path: str, keep_last_n_games: int):
-    """
-    Apply sliding window to limit database size.
-
-    Args:
-        db_path: Path to the SQLite database
-        keep_last_n_games: Number of most recent games to keep
-    """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT game_id FROM self_play_moves ORDER BY game_id DESC")
@@ -492,22 +416,6 @@ def run_continuous_loop(iterations: int, games_per_iter: int, sims: int, epochs:
                         keep_last_n: int, db_path: str, temperature: float = 1.2,
                         num_workers: int = 1, use_lookahead: bool = False, lookahead_depth: int = 2,
                         use_stockfish_policy: bool = False):
-    """
-    Run the complete reinforcement learning training loop.
-
-    Args:
-        iterations: Number of training iterations
-        games_per_iter: Number of games to generate per iteration
-        sims: MCTS simulations per position
-        epochs: Training epochs per iteration
-        keep_last_n: Number of games to keep in database
-        db_path: Path to the SQLite database
-        temperature: Temperature for move selection
-        num_workers: Number of parallel workers
-        use_lookahead: Whether to use lookahead data
-        lookahead_depth: Depth of lookahead sequences
-        use_stockfish_policy: Whether to use Stockfish policy data for training
-    """
     init_self_play_db(db_path)
     print(f"\n🚀 STARTING TRAINING LOOP FOR {iterations} ITERATIONS (workers={num_workers}, lookahead={use_lookahead}, stockfish_policy={use_stockfish_policy})")
 

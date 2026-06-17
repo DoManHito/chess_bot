@@ -14,7 +14,7 @@ from engine.unified_mcts import UnifiedMCTS
 
 app = FastAPI(title="Chess Bot API", version="2.0")
 
-STOCKFISH_PATH = "./stockfish"
+STOCKFISH_PATH = "./stockfish-ubuntu-x86-64-avx2"
 stockfish_engine = None
 
 @app.on_event("startup")
@@ -62,8 +62,6 @@ else:
 classifier = MoveClassifier(
     weights_path="models/weights_bot.pth", 
     device=device,
-    use_unified_model=True,
-    policy_output_dim=64
 )
 classifier_load_time = time.time() - start_time
 print(f"Unified classifier loaded in {classifier_load_time:.2f} seconds")
@@ -86,41 +84,51 @@ print(f"=== Total startup time: {total_startup_time:.2f} seconds ===")
 
 
 def get_stockfish_verdict(board: chess.Board, played_move: chess.Move, move_san: str) -> str:
-    global stockfish_engine
+    """Улучшенная функция получения вердикта с принудительной очисткой кэша движка"""
     if stockfish_engine is None:
-        return "N/A"
-
+        return "Good"
     try:
-        analysis = stockfish_engine.analyse(board, chess.engine.Limit(depth=12))
+        # СБРОС ХЭШ-ТАБЛИЦЫ: убирает "память" движка. Оценка одной позиции всегда будет строго одинаковой!
+        stockfish_engine.configure({"Clear Hash": True})
         
-        best_score_obj = analysis["score"].relative
-        best_score = best_score_obj.score(mate_score=10000)
+        move_limit = chess.engine.Limit(depth=18)
+        
+        # 1. Анализируем позицию ДО хода
+        analysis = stockfish_engine.analyse(board, move_limit)
+        best_move = analysis.get("move")
+        best_score = analysis["score"].white().score(mate_score=10000)
 
+        if played_move == best_move:
+            return "Best"
+
+        # 2. Анализируем позицию ПОСЛЕ хода
         board_after = board.copy()
         board_after.push(played_move)
         
-        analysis_after = stockfish_engine.analyse(board_after, chess.engine.Limit(depth=12))
-        
-        played_score = -analysis_after["score"].relative.score(mate_score=10000)
+        # Очищаем хэш еще раз перед вторым анализом для точности
+        stockfish_engine.configure({"Clear Hash": True})
+        analysis_after = stockfish_engine.analyse(board_after, move_limit)
+        played_score = analysis_after["score"].white().score(mate_score=10000)
 
-        loss = best_score - played_score
-
-        if played_move == analysis.get("move") or loss <= 10:
-            return "Best"
-        elif loss <= 35:
-            return "Excellent"
-        elif loss <= 80:
-            return "Good"
-        elif loss <= 150:
-            return "Inaccuracy"
-        elif loss <= 250:
-            return "Mistake"
+        # Считаем разницу (потерю) в зависимости от того, чей был ход
+        if board.turn == chess.WHITE:
+            loss = (best_score - played_score) / 100.0
         else:
-            return "Blunder"
+            loss = (played_score - best_score) / 100.0
 
+        if board_after.is_checkmate():
+            loss = -1.0
+
+        # Жесткие пороги классификации Стокфиша
+        if loss <= 0.02: return "Best"
+        elif loss <= 0.07: return "Excellent"
+        elif loss <= 0.15: return "Good"
+        elif loss <= 0.30: return "Inaccuracy"
+        elif loss <= 0.55: return "Mistake"
+        else: return "Blunder"
     except Exception as e:
         print(f"[ERROR] Stockfish analysis failed: {e}")
-        return "N/A"
+        return "Good"
 
 
 @app.get("/")
@@ -140,53 +148,66 @@ def root():
 @app.get("/analyze_move")
 def analyze_move(fen: str, move_san: str):
     """
-    Analyze a move using both neural network and Stockfish.
-    
-    Returns classification from NN and ideal classification from Stockfish.
+    Стабильный анализ хода игрока. Поддерживает форматы SAN и UCI, 
+    а также защищает фронтенд от падений интерфейса при сбоях.
     """
     try:
         board = chess.Board(fen)
-        move = board.parse_san(move_san)
+        
+        try:
+            move = board.parse_san(move_san)
+        except ValueError:
+            move = board.parse_uci(move_san)
 
-        # Get NN classification
-        classes, _, _ = classifier.classify_moves_batch(board, [move_san])
-        nn_class = classes[0] if classes else "Good"
+        clean_move_san = board.san(move)
 
-        # Get Stockfish ideal classification
-        ideal_class = get_stockfish_verdict(board, move, move_san)
+        try:
+            classes, _, _ = classifier.classify_moves_batch(board, [clean_move_san])
+            nn_class = classes[0] if classes else "Good"
+        except Exception as e:
+            print(f"[WARNING] NN Classification failed: {e}")
+            nn_class = "Good"
+
+        ideal_class = get_stockfish_verdict(board, move, clean_move_san)
         
         return {
             "nn_class": nn_class,
             "ideal_class": ideal_class,
-            "move_san": move_san,
+            "move_san": clean_move_san,
             "move_uci": move.uci()
         }
     except Exception as e:
-        return {"error": str(e)}
+        print(f"[CRITICAL ERROR] /analyze_move completely crashed: {e}")
+        return {
+            "error": str(e),
+            "nn_class": "Good",
+            "ideal_class": "Good",
+            "move_san": move_san,
+            "move_uci": ""
+        }
 
 
 @app.get("/get_move")
-def get_move(fen: str, simulations: int = 20):
-    """
-    Get the bot's best move using MCTS.
-    
-    Args:
-        fen: Board position in FEN notation
-        simulations: Number of MCTS simulations (default: 20)
-    
-    Returns:
-        Move information with NN and Stockfish classifications
-    """
+def get_move(fen: str, simulations: int = 100):    
     try:
         start_time = time.time()
         board = chess.Board(fen)
+
+        if board.fullmove_number == 1 and hasattr(engine, 'board_cache'):
+            engine.board_cache.clear()
         
         if board.is_game_over():
             return {"error": "Game over", "result": board.result()}
         
+        if board.fullmove_number <= 8:
+            current_temperature = 1.0  
+        else:
+            current_temperature = 0.0
+        
         # MCTS search
         search_start = time.time()
-        bot_move, visit_dict = engine.search(board, num_simulations=simulations)
+        bot_move, visit_dict = engine.search(board, num_simulations=simulations, temperature=current_temperature)
+
         search_time = time.time() - search_start
         print(f"[DEBUG] /get_move: MCTS search took {search_time:.2f}s")
         

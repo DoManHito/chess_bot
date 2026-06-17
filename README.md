@@ -1,6 +1,6 @@
-# Chess Bot - Unified Model with Lookahead Capability
+# Chess Bot - Unified Model with Lookahead Capability (Option A)
 
-A chess analysis system that uses a unified neural network with lookahead capability to classify and evaluate chess moves. The system combines move classification, position evaluation, and policy prediction into a single model that learns to predict move quality based on future game outcomes.
+A chess analysis system that uses a unified neural network to classify and evaluate chess moves through value-based lookahead. The system computes move quality by comparing position evaluation before and after each move, eliminating the need for a separate classification head.
 
 ## Table of Contents
 
@@ -12,15 +12,14 @@ A chess analysis system that uses a unified neural network with lookahead capabi
 - [Training](#training)
 - [Project Structure](#project-structure)
 - [Unified Model Architecture](#unified-model-architecture)
-- [Lookahead Capability](#lookahead-capability)
 - [Move Classification](#move-classification)
 - [Database Schema](#database-schema)
 
 ## Project Description
 
-Chess Bot is an advanced chess analysis system with unified model architecture that:
+Chess Bot is an advanced chess analysis system using **Option A** architecture:
 
-- **Unified Model**: Single neural network with three heads (Classification, Value, Policy)
+- **Unified Model**: Single neural network with Value and Policy heads (classification computed via value difference)
 - **Lookahead Learning**: Trains on move sequences to understand consequences of each move
 - **Classifies moves** as: Best, Excellent, Good, Inaccuracy, Mistake, Blunder
 - **Evaluates positions** using values from -1 to 1
@@ -37,6 +36,10 @@ Chess Bot is an advanced chess analysis system with unified model architecture t
 - FastAPI >= 0.100.0
 - Uvicorn >= 0.22.0
 - tqdm >= 4.65.0
+- pandas >= 1.3.0
+- matplotlib >= 3.4.0
+- seaborn >= 0.11.0
+- scikit-learn >= 0.24.0
 
 ## Installation
 
@@ -48,7 +51,7 @@ pip install -r requirements.txt
 2. Download Stockfish (optional, for move analysis):
 ```bash
 # Download from https://stockfishchess.org/download/
-# Place at ./stockfish
+# Place at ./stockfish-ubuntu-x86-64-avx2
 ```
 
 3. Start the server:
@@ -63,6 +66,7 @@ python server.py
 - `GET /` - API information
 - `GET /analyze_move` - Analyze a move (requires FEN and SAN)
 - `GET /get_move` - Get bot's best move (requires FEN, optional simulations count)
+- `GET /get_policy` - Get move policy from unified model (requires FEN)
 
 #### `/analyze_move` Parameters
 - `fen` (string): Board position in FEN notation
@@ -72,39 +76,51 @@ python server.py
 - `fen` (string): Board position in FEN notation
 - `simulations` (int, default: 100): Number of MCTS simulations
 
-#### Response Example
+#### `/get_policy` Parameters
+- `fen` (string): Board position in FEN notation
+- `top_k` (int, default: 64): Number of top moves to return
+
+#### Response Examples
+
+**`/analyze_move` Response:**
+```json
+{
+  "nn_class": "Excellent",
+  "ideal_class": "Best",
+  "move_san": "e4",
+  "move_uci": "e2e4"
+}
+```
+
+**`/get_move` Response:**
 ```json
 {
   "move_uci": "e2e4",
   "move_san": "e4",
   "bot_nn_class": "Excellent",
-  "bot_ideal_class": "Best"
+  "bot_ideal_class": "Best",
+  "visit_counts": {"e2e4": 45, "g1f3": 30, ...},
+  "total_time": 0.234
+}
+```
+
+**`/get_policy` Response:**
+```json
+{
+  "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+  "policy": {"e7e5": 0.35, "g8f6": 0.28, "g8f6": 0.15, ...},
+  "total_moves": 64
 }
 ```
 
 ## Training
-
-### Self-Play RL Training
-
-Generate self-play games and train with MCTS:
-
-```bash
-python train_unified.py --mode supervised --epochs 10 --batch-size 2048 --lr 1e-3 --alpha 0.5 --num-workers 12
-```
-
-Options:
-- `--iterations`: Number of RL iterations (default: 5)
-- `--games-per-iter`: Games generated per iteration (default: 10)
-- `--sims`: MCTS simulations per position (default: 800)
-- `--epochs`: Training epochs per iteration (default: 3)
-- `--num-workers`: Parallel workers (default: 1)
 
 ### Supervised Training
 
 Train on existing Stockfish games from the database using evaluation delta as ground truth:
 
 ```bash
-python train_unified.py --mode supervised --epochs 10 --batch-size 256 --sample-rate 1.0
+python train_unified.py --mode supervised --epochs 10 --batch-size 256 --lr 1e-3 --alpha 0.5 --sample-rate 1.0
 ```
 
 Options:
@@ -115,6 +131,24 @@ Options:
 - `--sample-rate`: Fraction of data to sample (1.0 = all data)
 - `--no-val`: Disable validation split
 - `--val-ratio`: Validation ratio (default: 0.1)
+- `--num-workers`: Parallel data loading workers (default: 4)
+
+### Self-Play RL Training
+
+Generate self-play games and train with MCTS:
+
+```bash
+python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800 --epochs 3
+```
+
+Options:
+- `--iterations`: Number of RL iterations (default: 5)
+- `--games-per-iter`: Games generated per iteration (default: 10)
+- `--sims`: MCTS simulations per position (default: 800)
+- `--epochs`: Training epochs per iteration (default: 3)
+- `--keep-last-n`: Keep only last N games in database (default: 1000)
+- `--temperature`: Exploration temperature (default: 1.2)
+- `--num-workers`: Parallel workers (default: 1)
 
 ### Combined Training
 
@@ -134,7 +168,7 @@ This is recommended for best results:
 chess_bot/
 ├── classifiers/              # Move classification module
 │   ├── classification_config.py    # Class names and thresholds
-│   ├── move_classifier.py          # Main move classifier
+│   ├── move_classifier.py          # Main move classifier (Option A)
 │   └── self_play_dataset.py        # Self-play training dataset
 │
 ├── database/                 # Database operations module
@@ -147,8 +181,8 @@ chess_bot/
 │   └── rl_trainer.py         # Reinforcement learning training loop
 │
 ├── models/                   # Neural network models
-│   ├── unified_chess_nets.py # Unified model with lookahead support
-│   ├── weights_bot.pth       # Bot weights for self-play
+│   ├── unified_chess_nets.py # Unified model (Option A)
+│   ├── weights_bot.pth       # Bot weights
 │   └── weights_bot copy.pth  # Backup weights
 │
 ├── parsers/                  # Format parsers
@@ -157,7 +191,6 @@ chess_bot/
 ├── train_unified.py          # Unified training script
 ├── server.py                 # FastAPI server
 ├── test_inference.py         # Inference tests
-├── test_unified_model.py     # Unified model tests
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # This file
 └── .gitignore
@@ -165,103 +198,52 @@ chess_bot/
 
 ## Unified Model Architecture
 
-### UnifiedMoveClassifierNet
+### Option A: Value-Based Classification
 
-The unified model combines three heads into a single network:
+The unified model uses **Option A** architecture where classification is computed via value difference rather than a dedicated classification head:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Unified Chess Model                         │
+│              Unified Chess Model (Option A)              │
 │  ┌───────────────────────────────────────────────┐     │
 │  │           Shared Backbone (ChessCoreNet)       │     │
 │  │  (Conv2D + Residual Blocks)                    │     │
 │  └─────────────┬─────────────────────────────────┘     │
 │                │                                         │
 │  ┌─────────────┴─────────────────────────────────┐     │
-│  │  Classification Head (6 classes)               │     │
-│  │  (Best/Excellent/Good/Inaccuracy/Mistake/Blunder)│     │
-│  └───────────────────────────────────────────────┘     │
-│  ┌───────────────────────────────────────────────┐     │
 │  │  Value Head (-1 to 1)                          │     │
+│  │  (Position evaluation)                         │     │
 │  └───────────────────────────────────────────────┘     │
 │  ┌───────────────────────────────────────────────┐     │
 │  │  Policy Head (Move probabilities)              │     │
-│  │  (for MCTS acceleration)                       │     │
+│  │  (4096 dimensions for all legal moves)         │     │
 │  └───────────────────────────────────────────────┘     │
 └─────────────────────────────────────────────────────────┘
+
+Classification is computed as:
+- loss = |value_before - value_after| (for White)
+- loss = |value_after - value_before| (for Black)
 ```
 
 ### ChessCoreNet (Shared Backbone)
-- Input: 25-channel board representation (12 piece types + turn indicator)
+- Input: **13-channel** board representation (12 piece types + turn indicator)
+  - Channels 0-5: White pieces (Pawn, Knight, Bishop, Rook, Queen, King)
+  - Channels 6-11: Black pieces (Pawn, Knight, Bishop, Rook, Queen, King)
+  - Channel 12: Active turn (1 = White, 0 = Black)
 - Initial convolution: 3x3 kernel, 128 output channels
-- 4 residual blocks with BatchNorm and ReLU
-- Output: 128-channel feature map
-
-### Classification Head
-- Convolution reduction: 1x1 kernel to 16 channels
-- Fully connected: 16*8*8 -> 256 -> 6 (class logits)
-- Dropout: 0.4
+- 6 residual blocks with BatchNorm and ReLU
+- Output: 128-channel feature map (8x8)
 
 ### Value Head
-- Fully connected: 16*8*8 -> 32 -> 1
+- Convolution reduction: 1x1 kernel to 32 channels
+- Fully connected: 32*8*8 → 256 → 1
 - Output: tanh-scaled value in [-1, 1]
 
-### Policy Head (NEW for MCTS)
-- Fully connected: 16*8*8 -> 128 -> 32 -> 64
-- Output: Softmax-normalized move probabilities
+### Policy Head
+- Convolution reduction: 1x1 kernel to 32 channels
+- Fully connected: 32*8*8 → 256 → 4096
+- Output: Raw logits (softmax applied during inference)
 - Used to accelerate MCTS by predicting move distributions
-
-## Lookahead Capability
-
-### Concept
-Instead of classifying only a single move, the model learns to evaluate:
-1. **Current move** (as before)
-2. **Subsequent N moves** (lookahead sequence)
-3. **Final game result** after the sequence
-
-### Lookahead Data Structure
-```python
-@dataclass
-class LookaheadMoveData:
-    """Data for lookahead training"""
-    board_fen: str                    # Starting position
-    move_san: str                     # Move to evaluate
-    lookahead_depth: int              # Sequence depth (e.g., 3)
-    future_moves: List[str]           # Subsequent moves
-    final_evaluation: float           # Evaluation after sequence
-    final_classification: str         # Class of final position
-    move_sequence_classifications: List[str]  # Class of each move in sequence
-```
-
-### Example Lookahead Data
-```json
-{
-  "board_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-  "move_san": "e4",
-  "lookahead_depth": 3,
-  "future_moves": ["e5", "Nf3", "Nc6"],
-  "final_evaluation": 0.15,
-  "final_classification": "Good",
-  "move_sequence_classifications": ["Excellent", "Good", "Excellent"]
-}
-```
-
-### Training with Lookahead
-The unified model is trained with a combined loss:
-```python
-loss = (
-    alpha * classification_loss +
-    beta * value_loss +
-    gamma * policy_loss
-)
-```
-
-### Benefits
-1. **Lookahead learning** — Model learns consequences of moves
-2. **Unified architecture** — Less code, easier maintenance
-3. **Policy head** — MCTS acceleration via predicted move distributions
-4. **Consistency** — All predictions from single model
-5. **Data efficiency** — Each self-play game yields more training examples
 
 ## Move Classification
 
@@ -269,12 +251,12 @@ The system classifies moves based on the evaluation delta (change in position va
 
 | Class | Description | Delta Range |
 |-------|-------------|-------------|
-| **Best** | Best move | 0.0 - 0.02 |
-| **Excellent** | Very good move | 0.02 - 0.15 |
-| **Good** | Good move | 0.15 - 0.40 |
-| **Inaccuracy** | Inaccurate move | 0.40 - 0.80 |
-| **Mistake** | Mistake | 0.80 - 1.50 |
-| **Blunder** | Blunder | > 1.50 |
+| **Best** | Best move | ≤ 0.02 |
+| **Excellent** | Very good move | ≤ 0.07 |
+| **Good** | Good move | ≤ 0.15 |
+| **Inaccuracy** | Inaccurate move | ≤ 0.30 |
+| **Mistake** | Mistake | ≤ 0.55 |
+| **Blunder** | Blunder | > 0.55 |
 
 ### MCTS Move Priorities
 
@@ -286,6 +268,10 @@ Inaccuracy: 0.2
 Mistake: 0.05
 Blunder: 0.001
 ```
+
+### Confidence via Policy Head
+
+The policy head provides move confidence as a probability distribution over all 4096 possible moves. The confidence for a specific move is its softmax probability.
 
 ## Database Schema
 

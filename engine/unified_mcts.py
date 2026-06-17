@@ -1,26 +1,13 @@
-"""
-Unified MCTS Engine with Policy Head Integration.
-
-This module implements an MCTS engine that uses the unified model's policy head
-for move prioritization, significantly accelerating the search process.
-"""
-
 import math
 import random
 import chess
 import numpy as np
 import time
 from typing import Dict, Optional, Tuple
-from models.unified_chess_nets import ChessCoreNet, UnifiedMoveClassifierNet, CLASS_NAMES
-
+from models.unified_chess_nets import UnifiedMoveClassifierNet, CLASS_NAMES
+from classifiers.move_classifier import MoveData
 
 class MCTSNode:
-    """
-    Node in the Monte Carlo Tree Search (MCTS) tree.
-
-    Each node represents a chess board position and stores information about
-    simulations that have passed through it.
-    """
     def __init__(self, board: chess.Board, parent: Optional['MCTSNode'] = None, move: Optional[chess.Move] = None):
         self.board = board
         self.parent = parent
@@ -48,32 +35,8 @@ class MCTSNode:
 
 
 class UnifiedMCTS:
-    """
-    Monte Carlo Tree Search (MCTS) engine optimized for chess move classification.
-
-    This class implements the MCTS algorithm enhanced with:
-    1. **Unified Model Policy**: Uses the unified model's policy head for move priors
-    2. **Move Prioritization**: Only evaluates the top N moves based on heuristics
-    3. **Caching**: Stores board evaluations to avoid redundant computations
-
-    The MCTS algorithm follows four phases:
-    1. **Selection**: Traverse the tree using UCB1 to select the most promising node
-    2. **Expansion**: Add a new child node
-    3. **Evaluation**: Use the unified model to evaluate the new position
-    4. **Backpropagation**: Propagate the evaluation value back up the tree
-    """
     def __init__(self, unified_model: UnifiedMoveClassifierNet, cpuct: float = 2.0,
                  max_simulations: int = 20, top_moves_ratio: float = 0.3, policy_output_dim: int = 64):
-        """
-        Initialize the MCTS engine.
-
-        Args:
-            unified_model: UnifiedMoveClassifierNet instance for policy and value predictions
-            cpuct: UCB1 exploration constant (default: 2.0)
-            max_simulations: Maximum number of simulations per search (default: 20)
-            top_moves_ratio: Fraction of legal moves to evaluate (default: 0.3)
-            policy_output_dim: Dimension of policy output (default: 64)
-        """
         self.model = unified_model
         self.cpuct = cpuct
         self.max_simulations = max_simulations
@@ -100,15 +63,6 @@ class UnifiedMCTS:
         return board.fen()
 
     def _evaluate_and_expand_node(self, node: MCTSNode) -> float:
-        """
-        Evaluate a node and expand it with children.
-
-        Args:
-            node: The MCTS node to evaluate and expand
-
-        Returns:
-            Average evaluation value of the expanded children
-        """
         # Check if game is over
         if node.board.is_game_over():
             return self._get_terminal_value(node.board)
@@ -161,18 +115,42 @@ class UnifiedMCTS:
             top_moves = legal_moves
 
         # Get policy and values from unified model
+
+        board_fen = node.board.fen()
+        turn_num = node.board.fullmove_number
+        turn_label = "White" if node.board.turn == chess.WHITE else "Black"
+
+        batch_moves = [
+            MoveData(
+                board_fen=board_fen,
+                move_san=node.board.san(m),
+                turn_num=turn_num,
+                turn_label=turn_label
+            )
+            for m in top_moves
+        ]
+
         try:
-            classes, confidences, values = self.model.classify_moves_batch(node.board, [m.uci() for m in top_moves])
+            batch_results = self.model.classify_moves_batch(batch_moves)
+            
+            classes = [r.classification for r in batch_results]
+            confidences = [r.confidence for r in batch_results]
+            values = [r.evaluation for r in batch_results]
         except Exception as e:
             print(f"Batch error, falling back to sequential: {e}")
             classes, confidences, values = [], [], []
             for move in top_moves:
                 try:
                     san = node.board.san(move)
-                    res, val = self.model.classify_move(node.board.fen(), san)
+                    res = self.model.classify_move(
+                        board_fen, 
+                        san, 
+                        turn_num=turn_num, 
+                        turn_label=turn_label
+                    )
                     classes.append(res.classification)
                     confidences.append(res.confidence)
-                    values.append(val)
+                    values.append(res.evaluation)
                 except Exception as e2:
                     print(f"Sequential error for move {move}: {e2}")
                     classes.append("Good")
@@ -212,19 +190,7 @@ class UnifiedMCTS:
 
         return float(np.mean(leaf_values))
 
-    def search(self, initial_board: chess.Board, num_simulations: int = None) -> Tuple[Optional[chess.Move], Dict[str, float]]:
-        """
-        Run MCTS search to find the best move.
-
-        Args:
-            initial_board: Starting chess board position
-            num_simulations: Number of simulations to run (uses max_simulations if None)
-
-        Returns:
-            Tuple of (best_move, visit_dict):
-            - best_move: The best move found (or None if game over)
-            - visit_dict: Dictionary mapping move UCI to visit count
-        """
+    def search(self, initial_board: chess.Board, num_simulations: int = None, temperature: float = 0.0) -> Tuple[Optional[chess.Move], Dict[str, float]]:
         start_time = time.time()
 
         if initial_board.is_game_over():
@@ -266,45 +232,44 @@ class UnifiedMCTS:
                 value = -value
                 node = node.parent
 
-        # Get the best move from root's children
         legal_moves = list(initial_board.legal_moves)
         if not root.children:
             default_move = random.choice(legal_moves) if legal_moves else None
             uniform_policy = {m.uci(): 1.0 / len(legal_moves) for m in legal_moves} if legal_moves else {}
-            total_time = time.time() - start_time
             return default_move, uniform_policy
 
-        # Build visit dictionary for all legal moves
         visit_dict = {m.uci(): float(root.children[m].visit_count) if m in root.children else 0.0 for m in legal_moves}
-        best_move = max(root.children.keys(), key=lambda m: root.children[m].visit_count)
+
+        children_moves = list(root.children.keys())
+        visit_counts = np.array([float(root.children[m].visit_count) for m in children_moves], dtype=np.float32)
+
+        if temperature <= 0.0:
+            best_move = children_moves[np.argmax(visit_counts)]
+        else:
+            power_counts = visit_counts ** (1.0 / temperature)
+            sum_power = np.sum(power_counts)
+            
+            if sum_power > 0:
+                probabilities = power_counts / sum_power
+                chosen_idx = np.random.choice(len(children_moves), p=probabilities)
+                best_move = children_moves[chosen_idx]
+            else:
+                best_move = max(root.children.keys(), key=lambda m: root.children[m].visit_count)
 
         total_time = time.time() - start_time
-
         return best_move, visit_dict
 
     def get_policy(self, board: chess.Board, top_k: int = 64) -> Dict[str, float]:
-        """
-        Get policy probabilities for top K moves from the unified model.
-
-        Args:
-            board: Chess board position
-            top_k: Number of top moves to return (default: 64)
-
-        Returns:
-            Dictionary mapping move UCI to probability
-        """
         legal_moves = list(board.legal_moves)
         if not legal_moves:
             return {}
 
-        # Get policy from model
         policy_logits = self.model.get_policy(board, top_k)
 
         policy = {}
         for move in legal_moves:
             policy[move.uci()] = policy_logits[move.to_square].item()
 
-        # Normalize
         total = sum(policy.values())
         if total > 0:
             policy = {k: v / total for k, v in policy.items()}
