@@ -1,7 +1,3 @@
-"""
-Unified Training Script for Chess Neural Network - OPTION A (Lookahead via Value)
-"""
-
 import os
 import sqlite3
 import torch
@@ -17,10 +13,6 @@ from models.unified_chess_nets import UnifiedMoveClassifierNet, ChessCoreNet
 from engine.rl_trainer import run_continuous_loop
 
 class ChessMoveDataset(Dataset):
-    """
-    PyTorch Dataset для загрузки ходов из SQLite.
-    Использует уже имеющуюся классификацию ходов для фильтрации Policy Head.
-    """
     def __init__(self, db_path="chess_bot.db", game_ids=None, sample_rate=1.0):
         self.samples = []
         self.db_path = db_path
@@ -38,7 +30,7 @@ class ChessMoveDataset(Dataset):
         
         target_samples = int(total_moves * sample_rate) if sample_rate < 1.0 else total_moves
         
-        # ЗАПРОС: Вытаскиваем уже готовую классификацию ходов из вашей базы!
+        # Query: Extract already classified moves from your database!
         cursor.execute("""
             SELECT game_id, fen_before, fen_after, evaluation, classification
             FROM moves
@@ -60,7 +52,7 @@ class ChessMoveDataset(Dataset):
             current_eval = evaluation if evaluation is not None else 0.0
             move_class = classification if classification else "Good"
             
-            # Сохраняем FEN-ы, оценку и уже готовый класс из вашей базы
+            # Save FENs, evaluation, and already classified class from your database
             self.samples.append((fen_before, fen_after, move_class, current_eval))
             
             sample_counter += 1
@@ -107,10 +99,6 @@ class ChessMoveDataset(Dataset):
             torch.tensor(policy_weight, dtype=torch.float32)
         )
 
-
-"""
-Unified Training Script for Chess Neural Network - OPTION A (Lookahead via Value)
-"""
 
 def train_supervised(
     epochs=10, batch_size=256, lr=1e-3, alpha=0.5, db_path="chess_bot.db",

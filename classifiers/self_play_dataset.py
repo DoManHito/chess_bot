@@ -48,7 +48,7 @@ class ChessSelfPlayDataset(Dataset):
                 sample["lookahead_depth"] = int(lookahead_depth)
                 sample["future_moves"] = json.loads(future_moves) if future_moves else []
                 sample["final_classification"] = final_classification if final_classification else "Good"
-                sample["move_sequence_classes"] = json.loads(move_sequence_classes) if move_sequence_classes else [CLASS_NAMES[3]]  # Default to "Good"
+                sample["move_sequence_classes"] = json.loads(move_sequence_classes) if move_sequence_classes else [CLASS_NAMES[3]]
             
             self.samples.append(sample)
         

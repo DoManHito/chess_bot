@@ -1,33 +1,33 @@
-# Chess Bot - Unified Model with Lookahead Capability (Option A)
+# Chess Bot - Zjednoczony Model z Możliwością Przewidywania (Opcja A)
 
-A chess analysis system that uses a unified neural network to classify and evaluate chess moves through value-based lookahead. The system computes move quality by comparing position evaluation before and after each move, eliminating the need for a separate classification head.
+System analizy szachów wykorzystujący zjednoczoną sieć neuronową do klasyfikacji i oceny ruchów szachowych poprzez przewidywanie wartości. System oblicza jakość ruchu poprzez porównanie oceny pozycji przed i po każdym ruchu, eliminując potrzebę oddzielnego głowicy klasyfikacyjnej.
 
-## Table of Contents
+## Spis treści
 
-- [Project Description](#project-description)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Usage](#usage)
-- [API Endpoints](#api-endpoints)
-- [Training](#training)
-- [Project Structure](#project-structure)
-- [Unified Model Architecture](#unified-model-architecture)
-- [Move Classification](#move-classification)
-- [Database Schema](#database-schema)
+- [Opis Projektu](#opis-projektu)
+- [Wymagania](#wymagania)
+- [Instalacja](#instalacja)
+- [Użycie](#użycie)
+- [Koniec Punktów API](#koniec-punktów-api)
+- [Trening](#trening)
+- [Struktura Projektu](#struktura-projektu)
+- [Architektura Zjednoczonego Modelu](#architektura-zjednoczonego-modelu)
+- [Klasyfikacja Ruchów](#klasyfikacja-ruchów)
+- [Schemat Bazy Danych](#schemat-bazy-danych)
 
-## Project Description
+## Opis Projektu
 
-Chess Bot is an advanced chess analysis system using **Option A** architecture:
+Chess Bot to zaawansowany system analizy szachów wykorzystujący architekturę **Opcja A**:
 
-- **Unified Model**: Single neural network with Value and Policy heads (classification computed via value difference)
-- **Lookahead Learning**: Trains on move sequences to understand consequences of each move
-- **Classifies moves** as: Best, Excellent, Good, Inaccuracy, Mistake, Blunder
-- **Evaluates positions** using values from -1 to 1
-- **Predicts policies** for MCTS acceleration
-- **Generates training data** through self-play games with lookahead sequences
-- **Provides REST API** for system interaction
+- **Zjednoczony Model**: Jedna sieć neuronowa z głowicami Value i Policy (klasyfikacja obliczana poprzez różnicę wartości)
+- **Uczenie z Przewidywaniem**: Trening na sekwencjach ruchów do zrozumienia konsekwencji każdego ruchu
+- **Klasifikuje ruchy** jako: Najlepszy, Wyśmienity, Dobry, Nieprecyzyjny, Błąd, Katastrofa
+- **Ocenia pozycje** używając wartości od -1 do 1
+- **Przewiduje polityki** dla przyspieszenia MCTS
+- **Generuje dane treningowe** poprzez gry samogry z sekwencjami przewidywania
+- **Dostarcza REST API** do interakcji z systemem
 
-## Requirements
+## Wymagania
 
 - Python 3.8+
 - PyTorch >= 2.0.0
@@ -41,70 +41,70 @@ Chess Bot is an advanced chess analysis system using **Option A** architecture:
 - seaborn >= 0.11.0
 - scikit-learn >= 0.24.0
 
-## Installation
+## Instalacja
 
-1. Install dependencies:
+1. Zainstaluj zależności:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Download Stockfish (optional, for move analysis):
+2. Pobierz Stockfish (opcjonalnie, do analizy ruchów):
 ```bash
-# Download from https://stockfishchess.org/download/
-# Place at ./stockfish-ubuntu-x86-64-avx2
+# Pobierz z https://stockfishchess.org/download/
+# Umieść w ./stockfish-ubuntu-x86-64-avx2
 ```
 
-3. Start the server:
+3. Uruchom serwer:
 ```bash
 python server.py
 ```
 
-## Usage
+## Użycie
 
-### API Endpoints
+### Koniec Punktów API
 
-- `GET /` - API information
-- `GET /analyze_move` - Analyze a move (requires FEN and SAN)
-- `GET /get_move` - Get bot's best move (requires FEN, optional simulations count)
-- `GET /get_policy` - Get move policy from unified model (requires FEN)
+- `GET /` - Informacje o API
+- `GET /analyze_move` - Przeanalizuj ruch (wymaga FEN i SAN)
+- `GET /get_move` - Pobierz najlepszy ruch bota (wymaga FEN, opcjonalna liczba symulacji)
+- `GET /get_policy` - Pobierz politykę ruchu ze zjednoczonego modelu (wymaga FEN)
 
-#### `/analyze_move` Parameters
-- `fen` (string): Board position in FEN notation
-- `move_san` (string): Move in SAN notation
+#### Parametry `/analyze_move`
+- `fen` (string): Pozycja planszy w notacji FEN
+- `move_san` (string): Ruch w notacji SAN
 
-#### `/get_move` Parameters
-- `fen` (string): Board position in FEN notation
-- `simulations` (int, default: 100): Number of MCTS simulations
+#### Parametry `/get_move`
+- `fen` (string): Pozycja planszy w notacji FEN
+- `simulations` (int, domyślnie: 100): Liczba symulacji MCTS
 
-#### `/get_policy` Parameters
-- `fen` (string): Board position in FEN notation
-- `top_k` (int, default: 64): Number of top moves to return
+#### Parametry `/get_policy`
+- `fen` (string): Pozycja planszy w notacji FEN
+- `top_k` (int, domyślnie: 64): Liczba najlepszych ruchów do zwrócenia
 
-#### Response Examples
+#### Przykłady Odpowiedzi
 
-**`/analyze_move` Response:**
+**Odpowiedź `/analyze_move`:**
 ```json
 {
-  "nn_class": "Excellent",
-  "ideal_class": "Best",
+  "nn_class": "Wyśmienity",
+  "ideal_class": "Najlepszy",
   "move_san": "e4",
   "move_uci": "e2e4"
 }
 ```
 
-**`/get_move` Response:**
+**Odpowiedź `/get_move`:**
 ```json
 {
   "move_uci": "e2e4",
   "move_san": "e4",
-  "bot_nn_class": "Excellent",
-  "bot_ideal_class": "Best",
+  "bot_nn_class": "Wyśmienity",
+  "bot_ideal_class": "Najlepszy",
   "visit_counts": {"e2e4": 45, "g1f3": 30, ...},
   "total_time": 0.234
 }
 ```
 
-**`/get_policy` Response:**
+**Odpowiedź `/get_policy`:**
 ```json
 {
   "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
@@ -113,11 +113,11 @@ python server.py
 }
 ```
 
-## Training
+## Trening
 
-### Supervised Training
+### Nadzorowany Trening
 
-Train on existing Stockfish games from the database using evaluation delta as ground truth:
+Trening na istniejących grach Stockfish z bazy danych używając delta oceny jako prawdy:
 
 ```bash
 python train_unified.py --mode supervised --epochs 10 --batch-size 256 --lr 1e-3 --alpha 0.5 --sample-rate 1.0
@@ -125,159 +125,159 @@ lub
 python train_unified.py --mode rl --iterations 10 --games-per-iter 20 --sims 100 --temperature 1.0 --keep-last-n 5000 --epochs 3 --num-workers 2
 ```
 
-Options:
-- `--epochs`: Number of training epochs (default: 10)
-- `--batch-size`: Batch size for training (default: 256)
-- `--lr`: Learning rate (default: 0.001)
-- `--alpha`: Value loss weight (default: 0.5)
-- `--sample-rate`: Fraction of data to sample (1.0 = all data)
-- `--no-val`: Disable validation split
-- `--val-ratio`: Validation ratio (default: 0.1)
-- `--num-workers`: Parallel data loading workers (default: 4)
+Opcje:
+- `--epochs`: Liczba epok treningowych (domyślnie: 10)
+- `--batch-size`: Rozmiar partii do treningu (domyślnie: 256)
+- `--lr`: Wskaźnik uczenia (domyślnie: 0.001)
+- `--alpha`: Waga straty wartości (domyślnie: 0.5)
+- `--sample-rate`: Ułamek danych do pobrania (1.0 = wszystkie dane)
+- `--no-val`: Wyłącz podział walidacji
+- `--val-ratio`: Stosunek walidacji (domyślnie: 0.1)
+- `--num-workers`: Pracownicy równoległego ładowania danych (domyślnie: 4)
 
-### Self-Play RL Training
+### Trening RL Samogry
 
-Generate self-play games and train with MCTS:
+Generuj gry samogry i trenuj z MCTS:
 
 ```bash
 python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800 --epochs 3
 ```
 
-Options:
-- `--iterations`: Number of RL iterations (default: 5)
-- `--games-per-iter`: Games generated per iteration (default: 10)
-- `--sims`: MCTS simulations per position (default: 800)
-- `--epochs`: Training epochs per iteration (default: 3)
-- `--keep-last-n`: Keep only last N games in database (default: 1000)
-- `--temperature`: Exploration temperature (default: 1.2)
-- `--num-workers`: Parallel workers (default: 1)
+Opcje:
+- `--iterations`: Liczba iteracji RL (domyślnie: 5)
+- `--games-per-iter`: Gry generowane na iterację (domyślnie: 10)
+- `--sims`: Symulacje MCTS na pozycję (domyślnie: 800)
+- `--epochs`: Epoki treningowe na iterację (domyślnie: 3)
+- `--keep-last-n`: Zachowaj tylko ostatnie N gier w bazie danych (domyślnie: 1000)
+- `--temperature`: Temperatura eksploracji (domyślnie: 1.2)
+- `--num-workers`: Pracownicy równolegli (domyślnie: 1)
 
-### Combined Training
+### Połączony Trening
 
-First train on existing Stockfish games, then continue with self-play RL:
+Najpierw trenuj na istniejących grach Stockfish, a następnie kontynuuj z RL samogry:
 
 ```bash
 python train_unified.py --mode combined --epochs 5 --iterations 3
 ```
 
-This is recommended for best results:
-1. Phase 1: Learn move quality patterns from Stockfish games
-2. Phase 2: Refine with self-play and MCTS
+Zalecane dla najlepszych wyników:
+1. Faza 1: Naucz wzorce jakości ruchów z gier Stockfish
+2. Faza 2: Udoskonal z samogry i MCTS
 
-## Project Structure
+## Struktura Projektu
 
 ```
 chess_bot/
-├── classifiers/              # Move classification module
-│   ├── classification_config.py    # Class names and thresholds
-│   ├── move_classifier.py          # Main move classifier (Option A)
-│   └── self_play_dataset.py        # Self-play training dataset
+├── classifiers/              # Moduł klasyfikacji ruchów
+│   ├── classification_config.py    # Nazwy klas i progi
+│   ├── move_classifier.py          # Główny klasyfikator ruchów (Opcja A)
+│   └── self_play_dataset.py        # Zbiór danych treningowych samogry
 │
-├── database/                 # Database operations module
-│   ├── schema.py             # SQL schema definitions
-│   ├── chess_db.py           # CRUD operations for games and moves
-│   └── migrate_db.py         # Database migration script
+├── database/                 # Moduł operacji bazy danych
+│   ├── schema.py             # Definicje schematu SQL
+│   ├── chess_db.py           # Operacje CRUD dla gier i ruchów
+│   └── migrate_db.py         # Skrypt migracji bazy danych
 │
-├── engine/                   # Chess engine module
-│   ├── unified_mcts.py       # Unified MCTS with policy head
-│   └── rl_trainer.py         # Reinforcement learning training loop
+├── engine/                   # Moduł silnika szachowego
+│   ├── unified_mcts.py       # Zjednoczony MCTS z głowicą policy
+│   └── rl_trainer.py         # Pętla treningu uczenia się wzmocnienia
 │
-├── models/                   # Neural network models
-│   ├── unified_chess_nets.py # Unified model (Option A)
-│   ├── weights_bot.pth       # Bot weights
-│   └── weights_bot copy.pth  # Backup weights
+├── models/                   # Modele sieci neuronowej
+│   ├── unified_chess_nets.py # Zjednoczony model (Opcja A)
+│   ├── weights_bot.pth       # Wagi bota
+│   └── weights_bot copy.pth  # Zapasowe wagi
 │
-├── parsers/                  # Format parsers
-│   └── pgn_parser.py         # PGN file parser with Stockfish filter
+├── parsers/                  # Parserzy formatów
+│   └── pgn_parser.py         # Parser plików PGN z filtrem Stockfish
 │
-├── train_unified.py          # Unified training script
-├── server.py                 # FastAPI server
-├── test_inference.py         # Inference tests
-├── requirements.txt          # Python dependencies
-├── README.md                 # This file
+├── train_unified.py          # Skrypt treningu zjednoczonego
+├── server.py                 # Serwer FastAPI
+├── test_inference.py         # Testy wnioskowania
+├── requirements.txt          # Zależności Pythona
+├── README.md                 # Ten plik
 └── .gitignore
 ```
 
-## Unified Model Architecture
+## Architektura Zjednoczonego Modelu
 
-### Option A: Value-Based Classification
+### Opcja A: Klasyfikacja oparta na wartości
 
-The unified model uses **Option A** architecture where classification is computed via value difference rather than a dedicated classification head:
+Zjednoczony model wykorzystuje architekturę **Opcja A**, gdzie klasyfikacja jest obliczana poprzez różnicę wartości zamiast dedykowanej głowicy klasyfikacyjnej:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Unified Chess Model (Option A)              │
+│              Zjednoczony Model Szachowy (Opcja A)         │
 │  ┌───────────────────────────────────────────────┐     │
-│  │           Shared Backbone (ChessCoreNet)       │     │
-│  │  (Conv2D + Residual Blocks)                    │     │
+│  │           Wspólny Trzon (ChessCoreNet)         │     │
+│  │  (Conv2D + Bloki Residualne)                   │     │
 │  └─────────────┬─────────────────────────────────┘     │
 │                │                                         │
 │  ┌─────────────┴─────────────────────────────────┐     │
-│  │  Value Head (-1 to 1)                          │     │
-│  │  (Position evaluation)                         │     │
+│  │  Głowica Value (-1 do 1)                       │     │
+│  │  (Ocena pozycji)                               │     │
 │  └───────────────────────────────────────────────┘     │
 │  ┌───────────────────────────────────────────────┐     │
-│  │  Policy Head (Move probabilities)              │     │
-│  │  (4096 dimensions for all legal moves)         │     │
+│  │  Głowica Policy (Prawdopodobieństwa ruchów)    │     │
+│  │  (4096 wymiarów dla wszystkich legalnych ruchów) │     │
 │  └───────────────────────────────────────────────┘     │
 └─────────────────────────────────────────────────────────┘
 
-Classification is computed as:
-- loss = |value_before - value_after| (for White)
-- loss = |value_after - value_before| (for Black)
+Klasyfikacja jest obliczana jako:
+- strata = |value_before - value_after| (dla Białych)
+- strata = |value_after - value_before| (dla Czarnych)
 ```
 
-### ChessCoreNet (Shared Backbone)
-- Input: **13-channel** board representation (12 piece types + turn indicator)
-  - Channels 0-5: White pieces (Pawn, Knight, Bishop, Rook, Queen, King)
-  - Channels 6-11: Black pieces (Pawn, Knight, Bishop, Rook, Queen, King)
-  - Channel 12: Active turn (1 = White, 0 = Black)
-- Initial convolution: 3x3 kernel, 128 output channels
-- 6 residual blocks with BatchNorm and ReLU
-- Output: 128-channel feature map (8x8)
+### ChessCoreNet (Wspólny Trzon)
+- Wejście: **13-kanałowa** reprezentacja planszy (12 typów figur + wskaźnik ruchu)
+  - Kanały 0-5: Figury białe (Pion, Skoczek, Latający Słup, Wieża, Królowa, Król)
+  - Kanały 6-11: Figury czarne (Pion, Skoczek, Latający Słup, Wieża, Królowa, Król)
+  - Kanał 12: Aktywny ruch (1 = Białe, 0 = Czarne)
+- Początkowa konwolucja: jądro 3x3, 128 kanałów wyjściowych
+- 6 bloków residualnych z BatchNorm i ReLU
+- Wyjście: mapa cech 128-kanałowa (8x8)
 
-### Value Head
-- Convolution reduction: 1x1 kernel to 32 channels
-- Fully connected: 32*8*8 → 256 → 1
-- Output: tanh-scaled value in [-1, 1]
+### Głowica Value
+- Redukcja konwolucyjna: jądro 1x1 do 32 kanałów
+- Pełnie połączone: 32*8*8 → 256 → 1
+- Wyjście: wartość skalowana tanh w [-1, 1]
 
-### Policy Head
-- Convolution reduction: 1x1 kernel to 32 channels
-- Fully connected: 32*8*8 → 256 → 4096
-- Output: Raw logits (softmax applied during inference)
-- Used to accelerate MCTS by predicting move distributions
+### Głowica Policy
+- Redukcja konwolucyjna: jądro 1x1 do 32 kanałów
+- Pełnie połączone: 32*8*8 → 256 → 4096
+- Wyjście: surowe logits (softmax zastosowane podczas wnioskowania)
+- Używane do przyspieszenia MCTS poprzez przewidywanie dystrybucji ruchów
 
-## Move Classification
+## Klasyfikacja Ruchów
 
-The system classifies moves based on the evaluation delta (change in position value) before and after the move:
+System klasyfikuje ruchy na podstawie delta oceny (zmiana wartości pozycji) przed i po ruchu:
 
-| Class | Description | Delta Range |
-|-------|-------------|-------------|
-| **Best** | Best move | ≤ 0.02 |
-| **Excellent** | Very good move | ≤ 0.07 |
-| **Good** | Good move | ≤ 0.15 |
-| **Inaccuracy** | Inaccurate move | ≤ 0.30 |
-| **Mistake** | Mistake | ≤ 0.55 |
-| **Blunder** | Blunder | > 0.55 |
+| Klasa | Opis | Zakres Delta |
+|-------|------|--------------|
+| **Najlepszy** | Najlepszy ruch | ≤ 0.02 |
+| **Wyśmienity** | Bardzo dobry ruch | ≤ 0.07 |
+| **Dobry** | Dobry ruch | ≤ 0.15 |
+| **Nieprecyzyjny** | Nieprecyzyjny ruch | ≤ 0.30 |
+| **Błąd** | Błąd | ≤ 0.55 |
+| **Katastrofa** | Katastrofa | > 0.55 |
 
-### MCTS Move Priorities
+### Priorytety Ruchów MCTS
 
 ```
-Best: 1.0
-Excellent: 0.8
-Good: 0.5
-Inaccuracy: 0.2
-Mistake: 0.05
-Blunder: 0.001
+Najlepszy: 1.0
+Wyśmienity: 0.8
+Dobry: 0.5
+Nieprecyzyjny: 0.2
+Błąd: 0.05
+Katastrofa: 0.001
 ```
 
-### Confidence via Policy Head
+### Pewność poprzez Głowicę Policy
 
-The policy head provides move confidence as a probability distribution over all 4096 possible moves. The confidence for a specific move is its softmax probability.
+Głowica policy dostarcza pewności ruchu jako dystrybucję prawdopodobieństwa nad wszystkimi 4096 możliwymi ruchami. Pewność dla konkretnego ruchu to jego prawdopodobieństwo softmax.
 
-## Database Schema
+## Schemat Bazy Danych
 
-### games Table
+### Tabela games
 ```sql
 CREATE TABLE games (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -292,7 +292,7 @@ CREATE TABLE games (
 )
 ```
 
-### moves Table
+### Tabela moves
 ```sql
 CREATE TABLE moves (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,7 +309,7 @@ CREATE TABLE moves (
 )
 ```
 
-### self_play_moves Table (with Lookahead Support)
+### Tabela self_play_moves (z obsługą Lookahead)
 ```sql
 CREATE TABLE self_play_moves (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -324,7 +324,3 @@ CREATE TABLE self_play_moves (
     move_sequence_classes TEXT
 )
 ```
-
-## License
-
-This project is open source.

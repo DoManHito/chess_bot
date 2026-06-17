@@ -44,12 +44,6 @@ class ChessCoreNet(nn.Module):
 
 
 class UnifiedMoveClassifierNet(nn.Module):
-    """
-    Unified Network that shares core features for:
-    - Value Head (Position Evaluation: -1 to 1)
-    - Policy Head (Move probabilities: 64 dimensions - legal moves only)
-    Classification Head is omitted in Option A (computed via Value difference).
-    """
     def __init__(self, core_net: ChessCoreNet, hidden_dim: int = 256):
         super().__init__()
         self.core = core_net

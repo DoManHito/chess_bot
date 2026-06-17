@@ -30,7 +30,7 @@ def _safe_load_state_dict(self, state_dict, strict=False):
             if v.shape == model_dict[k].shape:
                 safe_checkpoint[k] = v
             else:
-                print(f"⚠️ Слой '{k}' временно пропущен/адаптирован из-за изменения размеров: {v.shape} -> {model_dict[k].shape}")
+                print(f"Layer '{k}' temporarily skipped/adapted due to resizing: {v.shape} -> {model_dict[k].shape}")
         elif strict:
             safe_checkpoint[k] = v
     return _orig_load_state_dict(self, safe_checkpoint, strict=False)
@@ -141,7 +141,7 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
                     in_channels = ckpt[key].shape[1]
                     break
         except Exception as e:
-            print(f"⚠️ Не удалось прочитать количество каналов из весов: {e}")
+            print(f"Failed to read number of channels from scale: {e}")
 
     evaluator = MoveClassifier(weights_path=bot_weights, device="cpu")
     
@@ -153,7 +153,6 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
                 break
         
         if current_channels != in_channels:
-            print(f"🔄 Адаптация внутренней модели MoveClassifier под {in_channels} каналов...")
             if hasattr(evaluator.model, 'core_net'):
                 evaluator.model.core_net = ChessCoreNet(in_channels=in_channels)
             elif hasattr(evaluator.model, 'core'):
@@ -165,7 +164,7 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
                 safe_checkpoint = {k: v for k, v in checkpoint.items() if k in model_dict and v.shape == model_dict[k].shape}
                 evaluator.model.load_state_dict(safe_checkpoint, strict=False)
             except Exception as e:
-                print(f"⚠️ Ошибка повторной адаптации весов: {e}")
+                print(f"Scale re-adaptation error: {e}")
 
     evaluator.model.eval()
 
@@ -302,15 +301,15 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
 
     weights_path = "models/weights_bot.pth"
     if os.path.exists(weights_path):
-        print(f"📦 Загрузка базовых весов из {weights_path}...")
+        print(f"📦 Loading base weights from {weights_path}...")
         try:
             checkpoint = torch.load(weights_path, map_location=device)
             model_dict = model.state_dict()
             safe_checkpoint = {k: v for k, v in checkpoint.items() if k in model_dict and v.shape == model_dict[k].shape}
             model.load_state_dict(safe_checkpoint, strict=False)
-            print("✅ Веса успешно адаптированы под архитектуру текущей итерации!")
+            print("✅ The weights have been successfully adapted to the architecture of the current iteration!")
         except Exception as e:
-            print(f"⚠️ Ошибка при адаптации весов: {e}")
+            print(f"Error while adapting scales: {e}")
             
     model.to(device)
 
@@ -338,7 +337,6 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
             _, value_preds, policy_logits = model(inputs)
             
             loss_value = criterion_value(value_preds.view(-1), value_targets.view(-1))
-            # KLDivLoss expects log-probabilities as input, not raw logits
             loss_policy = criterion_policy(F.log_softmax(policy_logits, dim=1), policy_targets)
 
             loss = (alpha * loss_value) + (policy_weight * loss_policy)

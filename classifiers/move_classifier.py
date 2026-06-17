@@ -33,13 +33,11 @@ class MoveClassifier:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
 
-        # Initialize core with 13 channels for Option A
         core = ChessCoreNet(in_channels=13)
         self.model = UnifiedMoveClassifierNet(core_net=core)
 
         try:
             state = torch.load(weights_path, map_location=self.device)
-            # Filter out incompatible weights (e.g., different input channels)
             filtered_state = {}
             for key, value in state.items():
                 if key in self.model.state_dict() and value.shape == self.model.state_dict()[key].shape:
@@ -137,10 +135,7 @@ class MoveClassifier:
         )
 
     def classify_moves_batch(self, batch_moves: List[MoveData]) -> List[MoveClassificationResult]:
-        """
-        Processes a batch of moves efficiently using 13 channels.
-        Evaluates position before and after for each move in parallel.
-        """
+        """Processes a batch of moves efficiently using 13 channels. Evaluates position before and after for each move in parallel."""
         if not batch_moves:
             return []
 

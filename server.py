@@ -53,7 +53,6 @@ print(f"PyTorch version: {torch.__version__}")
 
 start_time = time.time()
 print("Loading unified classifier model...")
-# Enable GPU if available for faster inference
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 if device == "cuda":
@@ -61,7 +60,6 @@ if device == "cuda":
 else:
     print("⚠️ Running on CPU - consider installing CUDA-enabled PyTorch")
 
-# Initialize unified model with policy head
 classifier = MoveClassifier(
     weights_path="models/weights_bot.pth", 
     device=device,
@@ -165,7 +163,6 @@ def get_stockfish_verdict(board: chess.Board, played_move: chess.Move, move_san:
 
 @app.get("/")
 def root():
-    """API information."""
     return {
         "name": "Chess Bot API v2.0",
         "description": "Unified chess analysis system with lookahead capability",
@@ -179,10 +176,6 @@ def root():
 
 @app.get("/analyze_move")
 def analyze_move(fen: str, move_san: str):
-    """
-    Стабильный анализ хода игрока. Поддерживает форматы SAN и UCI, 
-    а также защищает фронтенд от падений интерфейса при сбоях.
-    """
     try:
         board = chess.Board(fen)
         
@@ -236,7 +229,6 @@ def get_move(fen: str, simulations: int = 100):
         else:
             current_temperature = 0.0
         
-        # MCTS search
         search_start = time.time()
         bot_move, visit_dict = engine.search(board, num_simulations=simulations, temperature=current_temperature)
 
@@ -248,7 +240,6 @@ def get_move(fen: str, simulations: int = 100):
         
         move_san = board.san(bot_move)
 
-        # Get NN classification
         classify_start = time.time()
         try:
             nn_result = classifier.classify_move(fen, move_san)
@@ -258,7 +249,6 @@ def get_move(fen: str, simulations: int = 100):
         classify_time = time.time() - classify_start
         print(f"[DEBUG] /get_move: Classifier took {classify_time:.2f}s")
 
-        # Stockfish evaluation
         stockfish_start = time.time()
         bot_ideal_class = get_stockfish_verdict(board, bot_move, move_san)
         stockfish_time = time.time() - stockfish_start
@@ -281,16 +271,6 @@ def get_move(fen: str, simulations: int = 100):
 
 @app.get("/get_policy")
 def get_policy(fen: str, top_k: int = 64):
-    """
-    Get move policy from the unified model.
-    
-    Args:
-        fen: Board position in FEN notation
-        top_k: Number of top moves to return (default: 64)
-    
-    Returns:
-        Dictionary mapping move UCI to probability
-    """
     try:
         board = chess.Board(fen)
         if board.is_game_over():
