@@ -121,6 +121,8 @@ Train on existing Stockfish games from the database using evaluation delta as gr
 
 ```bash
 python train_unified.py --mode supervised --epochs 10 --batch-size 256 --lr 1e-3 --alpha 0.5 --sample-rate 1.0
+lub
+python train_unified.py --mode rl --iterations 10 --games-per-iter 20 --sims 100 --temperature 1.0 --keep-last-n 5000 --epochs 3 --num-workers 2
 ```
 
 Options:

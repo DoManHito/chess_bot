@@ -137,8 +137,16 @@ def train_supervised(
         train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
         val_loader = None
 
-    core = ChessCoreNet(in_channels=13)
-    model = UnifiedMoveClassifierNet(core_net=core).to(device)
+    sample_matrix = dataset[0][0]
+    if hasattr(sample_matrix, 'shape'):
+        in_channels = sample_matrix.shape[0]
+    elif isinstance(sample_matrix, (list, tuple)):
+        in_channels = len(sample_matrix)
+    else:
+        in_channels = 13
+    
+    core = ChessCoreNet(in_channels=in_channels)
+    model = UnifiedMoveClassifierNet(core_net=core)
 
     # Losses
     criterion_value = nn.MSELoss()

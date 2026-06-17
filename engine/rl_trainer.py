@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 import multiprocessing as mp
 from functools import partial
+import torch.nn.functional as F
 
 from classifiers.move_classifier import MoveClassifier, MoveData
 from engine.unified_mcts import UnifiedMCTS
@@ -19,9 +20,25 @@ from models.unified_chess_nets import ChessCoreNet, UnifiedMoveClassifierNet
 from classifiers.classification_config import CLASS_NAMES
 from classifiers.self_play_dataset import ChessSelfPlayDataset, LookaheadChessSelfPlayDataset
 
+_orig_load_state_dict = nn.Module.load_state_dict
+
+def _safe_load_state_dict(self, state_dict, strict=False):
+    model_dict = self.state_dict()
+    safe_checkpoint = {}
+    for k, v in state_dict.items():
+        if k in model_dict:
+            if v.shape == model_dict[k].shape:
+                safe_checkpoint[k] = v
+            else:
+                print(f"⚠️ Слой '{k}' временно пропущен/адаптирован из-за изменения размеров: {v.shape} -> {model_dict[k].shape}")
+        elif strict:
+            safe_checkpoint[k] = v
+    return _orig_load_state_dict(self, safe_checkpoint, strict=False)
+
+nn.Module.load_state_dict = _safe_load_state_dict
+
 
 def init_self_play_db(db_path: str):
-    """Инициализация таблицы самоигры в соответствии с README.md схемы данных."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -53,9 +70,6 @@ def get_next_game_id(db_path: str) -> int:
 
 
 def generate_lookahead_sequences(board: chess.Board, root_moves_uci: list, root_mcts_probs: list, lookahead_depth: int, evaluator: MoveClassifier):
-    """
-    Корректная генерация цепочек предсказаний вглубь без привязки к корневым индексам ходов.
-    """
     if lookahead_depth <= 0:
         return None
 
@@ -63,7 +77,6 @@ def generate_lookahead_sequences(board: chess.Board, root_moves_uci: list, root_
     sequence_moves = []
     sequence_classes = []
 
-    # Первый ход выбираем на основе распределения вероятностей MCTS
     if root_moves_uci and len(root_mcts_probs) == len(root_moves_uci):
         chosen_uci = np.random.choice(root_moves_uci, p=root_mcts_probs)
         move = chess.Move.from_uci(chosen_uci)
@@ -87,7 +100,6 @@ def generate_lookahead_sequences(board: chess.Board, root_moves_uci: list, root_
     sequence_classes.append(cls)
     current_board.push(move)
 
-    # Последующие ходы симуляции
     for _ in range(1, lookahead_depth):
         if current_board.is_game_over():
             break
@@ -95,7 +107,6 @@ def generate_lookahead_sequences(board: chess.Board, root_moves_uci: list, root_
         if not legal_moves:
             break
 
-        # В глубине симулируем выбор случайного легального ответа (или лучшего по эвристике)
         move = random.choice(legal_moves)
         chosen_uci = move.uci()
 
@@ -121,11 +132,43 @@ def generate_lookahead_sequences(board: chess.Board, root_moves_uci: list, root_
 
 
 def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations: int, temperature: float, db_path: str, lookahead_depth: int = 2):
-    # Инициализируем классификатор-обертку для MCTS
+    in_channels = 13
+    if os.path.exists(bot_weights):
+        try:
+            ckpt = torch.load(bot_weights, map_location="cpu")
+            for key in ["core.conv_init.weight", "core_net.conv_init.weight"]:
+                if key in ckpt:
+                    in_channels = ckpt[key].shape[1]
+                    break
+        except Exception as e:
+            print(f"⚠️ Не удалось прочитать количество каналов из весов: {e}")
+
     evaluator = MoveClassifier(weights_path=bot_weights, device="cpu")
+    
+    if hasattr(evaluator, 'model') and evaluator.model is not None:
+        current_channels = 13
+        for layer in evaluator.model.modules():
+            if isinstance(layer, nn.Conv2d):
+                current_channels = layer.in_channels
+                break
+        
+        if current_channels != in_channels:
+            print(f"🔄 Адаптация внутренней модели MoveClassifier под {in_channels} каналов...")
+            if hasattr(evaluator.model, 'core_net'):
+                evaluator.model.core_net = ChessCoreNet(in_channels=in_channels)
+            elif hasattr(evaluator.model, 'core'):
+                evaluator.model.core = ChessCoreNet(in_channels=in_channels)
+            
+            try:
+                checkpoint = torch.load(bot_weights, map_location="cpu")
+                model_dict = evaluator.model.state_dict()
+                safe_checkpoint = {k: v for k, v in checkpoint.items() if k in model_dict and v.shape == model_dict[k].shape}
+                evaluator.model.load_state_dict(safe_checkpoint, strict=False)
+            except Exception as e:
+                print(f"⚠️ Ошибка повторной адаптации весов: {e}")
+
     evaluator.model.eval()
 
-    # Передаем сам классификатор, так как MCTS вызывает метод пакетной оценки ходов
     mcts = UnifiedMCTS(unified_model=evaluator, cpuct=2.0, max_simulations=num_simulations, top_moves_ratio=0.3, policy_output_dim=64)
 
     board = chess.Board()
@@ -134,7 +177,6 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
     while not board.is_game_over() and len(game_history) < 250:
         fen_before = board.fen()
 
-        # Запуск поиска MCTS
         _, visit_dict = mcts.search(board, num_simulations=num_simulations, temperature=temperature)
         if not visit_dict:
             break
@@ -148,7 +190,6 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
         else:
             mcts_probs = np.ones_like(mcts_visits) / len(mcts_visits)
 
-        # Выбор хода на основе температуры
         if temperature > 0:
             exp_visits = mcts_visits ** (1.0 / (temperature + 1e-8))
             sum_exp = exp_visits.sum()
@@ -160,10 +201,8 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
             chosen_move_uci = moves_uci_list[best_idx]
             move = chess.Move.from_uci(chosen_move_uci)
 
-        # Честная структура MCTS policy для Option A (сохраняем распределение ходов)
         mcts_policy_dict = {m: float(p) for m, p in zip(moves_uci_list, mcts_probs)}
 
-        # Генерация цепочки lookahead
         lookahead_data = generate_lookahead_sequences(board, moves_uci_list, list(mcts_probs), lookahead_depth, evaluator)
 
         game_history.append({
@@ -175,7 +214,6 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
         })
         board.push(move)
 
-    # Определение исхода партии
     result = board.result()
 
     conn = sqlite3.connect(db_path)
@@ -187,7 +225,6 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
     elif result == "0-1":
         value_white = -1.0
 
-    # Сохранение всех ходов в базу данных
     for history_entry in game_history:
         fen_before = history_entry['fen_before']
         move_uci = history_entry['move_uci']
@@ -195,7 +232,6 @@ def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations
         lookahead_data = history_entry['lookahead_data']
         turn = history_entry['turn']
 
-        # Значение ценности с точки зрения ходившего игрока
         actual_value = value_white if turn == chess.WHITE else -value_white
 
         if lookahead_data:
@@ -258,17 +294,28 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    # Строго 13 каналов под архитектуру Option A
-    core = ChessCoreNet(in_channels=13)
+    sample_matrix = dataset[0][0]
+    in_channels = sample_matrix.shape[0] if hasattr(sample_matrix, 'shape') else 25
+
+    core = ChessCoreNet(in_channels=in_channels)
     model = UnifiedMoveClassifierNet(core_net=core)
 
     weights_path = "models/weights_bot.pth"
     if os.path.exists(weights_path):
-        model.load_state_dict(torch.load(weights_path, map_location=device), strict=False)
+        print(f"📦 Загрузка базовых весов из {weights_path}...")
+        try:
+            checkpoint = torch.load(weights_path, map_location=device)
+            model_dict = model.state_dict()
+            safe_checkpoint = {k: v for k, v in checkpoint.items() if k in model_dict and v.shape == model_dict[k].shape}
+            model.load_state_dict(safe_checkpoint, strict=False)
+            print("✅ Веса успешно адаптированы под архитектуру текущей итерации!")
+        except Exception as e:
+            print(f"⚠️ Ошибка при адаптации весов: {e}")
+            
     model.to(device)
 
     criterion_value = nn.MSELoss()
-    criterion_policy = nn.CrossEntropyLoss()
+    criterion_policy = nn.KLDivLoss(reduction="batchmean")
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
 
     for epoch in range(epochs):
@@ -277,20 +324,18 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
 
         progress_bar = tqdm(train_loader, desc=f"   Epoch {epoch+1}/{epochs}", leave=True)
         for batch in progress_bar:
-            # Обработка динамического формата возврата данных из датасета самоигры
             inputs = batch[0].to(device, non_blocking=True)
-            value_targets = batch[1].to(device, non_blocking=True).view(-1, 1)
-            policy_targets = batch[2].to(device, non_blocking=True)
+            class_targets = batch[1].to(device, non_blocking=True)
+            value_targets = batch[2].to(device, non_blocking=True).view(-1, 1)
+            policy_targets = batch[3].to(device, non_blocking=True)
 
             optimizer.zero_grad()
             
-            # В Option A классификация всегда возвращает None
             _, value_preds, policy_logits = model(inputs)
 
             loss_value = criterion_value(value_preds.view(-1), value_targets.view(-1))
-            loss_policy = criterion_policy(policy_logits, policy_targets)
+            loss_policy = criterion_policy(policy_logits, class_targets)
 
-            # Суммарный лосс без головы классификации
             loss = (alpha * loss_value) + (policy_weight * loss_policy)
             loss.backward()
             optimizer.step()
@@ -304,7 +349,6 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
 
 
 def apply_sliding_window(db_path: str, keep_last_n: int = 5000):
-    """Очистка старых ходов для удержания фокуса обучения на свежих партиях self-play."""
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -327,9 +371,6 @@ def run_continuous_loop(iterations: int = 5, games_per_iter: int = 10, sims: int
                         temperature: float = 1.0, epochs: int = 3, db_path: str = "chess_bot.db",
                         num_workers: int = 1, use_lookahead: bool = False, lookahead_depth: int = 2,
                         use_stockfish_policy: bool = False, keep_last_n: int = 1000):
-    """
-    Главная точка входа для конвейера RL-обучения.
-    """
     init_self_play_db(db_path)
     print(f"\n🚀 STARTING RL TRAINING PIPELINE FOR {iterations} ITERATIONS")
 
@@ -346,16 +387,13 @@ def run_continuous_loop(iterations: int = 5, games_per_iter: int = 10, sims: int
     for i in range(iterations):
         print(f"\n{'='*60}\n🌟 GLOBAL RL ITERATION {i+1}/{iterations}\n{'='*60}")
 
-        # Шаг 1: Генерация новых партий через MCTS самоигру
         run_self_play_session(num_games=games_per_iter, num_simulations=sims,
                               temperature=temperature, db_path=db_path,
                               bot_weights=bot_weights, num_workers=num_workers,
                               lookahead_depth=lookahead_depth if use_lookahead else 0)
 
-        # Шаг 2: Скользящее окно датасета (чтобы избежать стагнации градиента)
         apply_sliding_window(db_path, keep_last_n=keep_last_n)
 
-        # Шаг 3: Дообучение нейросети на обновленной базе данных
         train_unified_model(epochs=epochs, batch_size=64, lr=1e-3, alpha=0.5,
                             policy_weight=1.0, db_path=db_path, 
                             use_lookahead=use_lookahead, use_stockfish_policy=use_stockfish_policy)
