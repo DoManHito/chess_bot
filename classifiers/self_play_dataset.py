@@ -5,6 +5,7 @@ from torch.utils.data import Dataset
 import chess
 import numpy as np
 from classifiers.classification_config import CLASS_NAMES
+from models.unified_chess_nets import UnifiedMoveClassifierNet
 
 
 class ChessSelfPlayDataset(Dataset):
@@ -56,29 +57,6 @@ class ChessSelfPlayDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
-    def _board_to_tensor_static(self, board_before: chess.Board, board_after: chess.Board) -> torch.Tensor:
-        """Convert chess board states to a 25-channel tensor representation."""
-        tensor = np.zeros((25, 8, 8), dtype=np.float32)
-
-        pieces = [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING]
-        
-        for i, piece in enumerate(pieces):
-            for sq in board_before.pieces(piece, chess.WHITE):
-                tensor[i, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-            for sq in board_before.pieces(piece, chess.BLACK):
-                tensor[i + 6, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-
-        for i, piece in enumerate(pieces):
-            for sq in board_after.pieces(piece, chess.WHITE):
-                tensor[i + 12, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-            for sq in board_after.pieces(piece, chess.BLACK):
-                tensor[i + 18, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-
-        if board_before.turn == chess.WHITE:
-            tensor[24, :, :] = 1.0
-
-        return torch.from_numpy(tensor)
-
     def __getitem__(self, idx):
         torch.set_num_threads(1)
 
@@ -86,17 +64,8 @@ class ChessSelfPlayDataset(Dataset):
         board = chess.Board(sample["fen"])
         value_target = torch.tensor(sample["value"], dtype=torch.float32)
 
-        # Create board after the move
-        board_after = board.copy()
-        try:
-            move = chess.Move.from_uci(sample["move_uci"])
-            if move in board_after.legal_moves:
-                board_after.push(move)
-        except Exception:
-            pass
-
-        # Convert board states to tensor
-        input_tensor = self._board_to_tensor_static(board, board_after)
+        # Convert board state to 13-channel tensor (matches inference architecture)
+        input_tensor = UnifiedMoveClassifierNet.board_to_tensor(board)
 
         # Extract MCTS policy distribution
         policy_dict = sample["policy_dict"]
@@ -110,7 +79,11 @@ class ChessSelfPlayDataset(Dataset):
         if sum_dist <= 0:
             class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
 
-        return input_tensor, torch.tensor(class_target_distribution, dtype=torch.float32), value_target
+        # Create uniform policy target distribution (64 actions)
+        policy_target = np.ones(64, dtype=np.float32) / 64.0
+        policy_target_tensor = torch.from_numpy(policy_target)
+
+        return input_tensor, torch.from_numpy(class_target_distribution), value_target, policy_target_tensor
 
 
 class LookaheadMoveSequence:
@@ -207,34 +180,6 @@ class LookaheadChessSelfPlayDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
-    def _board_to_tensor_static(self, board_before: chess.Board, board_after: chess.Board) -> torch.Tensor:
-        """Convert chess board states to a 25-channel tensor representation."""
-        tensor = np.zeros((25, 8, 8), dtype=np.float32)
-
-        pieces = [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING]
-        
-        # Encode white pieces from board_before (channels 0-5)
-        for i, piece in enumerate(pieces):
-            for sq in board_before.pieces(piece, chess.WHITE):
-                tensor[i, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-            # Encode black pieces from board_before (channels 6-11)
-            for sq in board_before.pieces(piece, chess.BLACK):
-                tensor[i + 6, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-
-        # Encode white pieces from board_after (channels 12-17)
-        for i, piece in enumerate(pieces):
-            for sq in board_after.pieces(piece, chess.WHITE):
-                tensor[i + 12, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-            # Encode black pieces from board_after (channels 18-23)
-            for sq in board_after.pieces(piece, chess.BLACK):
-                tensor[i + 18, chess.square_rank(sq), chess.square_file(sq)] = 1.0
-
-        # Layer 24: Whose turn BEFORE (White=1, Black=0)
-        if board_before.turn == chess.WHITE:
-            tensor[24, :, :] = 1.0
-
-        return torch.from_numpy(tensor)
-
     def __getitem__(self, idx):
         torch.set_num_threads(1)
 
@@ -242,17 +187,8 @@ class LookaheadChessSelfPlayDataset(Dataset):
         board = chess.Board(sample["fen"])
         value_target = torch.tensor(sample["value"], dtype=torch.float32)
 
-        # Create board after the move
-        board_after = board.copy()
-        try:
-            move = chess.Move.from_uci(sample["move_uci"])
-            if move in board_after.legal_moves:
-                board_after.push(move)
-        except Exception:
-            pass
-
-        # Convert board states to tensor
-        input_tensor = self._board_to_tensor_static(board, board_after)
+        # Convert board state to 13-channel tensor (matches inference architecture)
+        input_tensor = UnifiedMoveClassifierNet.board_to_tensor(board)
 
         # Extract MCTS policy distribution
         policy_dict = sample["policy_dict"]

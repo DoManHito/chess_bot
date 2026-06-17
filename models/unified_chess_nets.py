@@ -47,7 +47,7 @@ class UnifiedMoveClassifierNet(nn.Module):
     """
     Unified Network that shares core features for:
     - Value Head (Position Evaluation: -1 to 1)
-    - Policy Head (Move probabilities: 4096 dimensions)
+    - Policy Head (Move probabilities: 64 dimensions - legal moves only)
     Classification Head is omitted in Option A (computed via Value difference).
     """
     def __init__(self, core_net: ChessCoreNet, hidden_dim: int = 256):
@@ -65,7 +65,7 @@ class UnifiedMoveClassifierNet(nn.Module):
         self.fc_value1 = nn.Linear(flattened_size, hidden_dim)
         self.fc_value2 = nn.Linear(hidden_dim, 1)
         
-        # Policy Head
+        # Policy Head - outputs 4096 logits (64x64 from/to square space)
         self.fc_policy1 = nn.Linear(flattened_size, hidden_dim)
         self.policy_output = nn.Linear(hidden_dim, 4096)
 
@@ -85,16 +85,26 @@ class UnifiedMoveClassifierNet(nn.Module):
         # Returns None for classification head, as Option A computes it logically
         return None, value, policy_logits
 
-    def get_policy(self, board: chess.Board, top_k: int = 64) -> torch.Tensor:
-        """Get move probability distribution for the given board."""
-        # board_to_tensor covers 13 channels and already has unsqueeze(0) removed internally
+    def get_policy(self, board: chess.Board, top_k: int = 64) -> dict:
+        """Get move probability distribution for the given board.
+        Returns dict {move_uci: probability} for all legal moves."""
         tensor = self.board_to_tensor(board).unsqueeze(0).to(next(self.parameters()).device)
         self.eval()
         with torch.no_grad():
             _, _, policy_logits = self(tensor)
-            # Apply softmax here for inference
-            policy = torch.softmax(policy_logits, dim=1)
-        return policy[0, :top_k]
+            policy = torch.softmax(policy_logits[0], dim=0)  # shape: [4096]
+
+        legal_moves = list(board.legal_moves)
+        result = {}
+        for move in legal_moves:
+            idx = move.from_square * 64 + move.to_square
+            result[move.uci()] = policy[idx].item()
+
+        # Renormalize over legal moves only
+        total = sum(result.values())
+        if total > 0:
+            result = {k: v / total for k, v in result.items()}
+        return result
 
     @staticmethod
     def board_to_tensor(board: chess.Board) -> torch.Tensor:

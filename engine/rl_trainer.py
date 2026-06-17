@@ -295,7 +295,7 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
     sample_matrix = dataset[0][0]
-    in_channels = sample_matrix.shape[0] if hasattr(sample_matrix, 'shape') else 25
+    in_channels = 13  # Fixed: must match inference architecture (UnifiedMoveClassifierNet.board_to_tensor)
 
     core = ChessCoreNet(in_channels=in_channels)
     model = UnifiedMoveClassifierNet(core_net=core)
@@ -324,6 +324,10 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
 
         progress_bar = tqdm(train_loader, desc=f"   Epoch {epoch+1}/{epochs}", leave=True)
         for batch in progress_bar:
+            # Validate batch structure
+            if len(batch) < 4:
+                raise RuntimeError(f"Batch has only {len(batch)} elements, expected 4. Batch: {batch}")
+            
             inputs = batch[0].to(device, non_blocking=True)
             class_targets = batch[1].to(device, non_blocking=True)
             value_targets = batch[2].to(device, non_blocking=True).view(-1, 1)
@@ -332,9 +336,10 @@ def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, p
             optimizer.zero_grad()
             
             _, value_preds, policy_logits = model(inputs)
-
+            
             loss_value = criterion_value(value_preds.view(-1), value_targets.view(-1))
-            loss_policy = criterion_policy(policy_logits, class_targets)
+            # KLDivLoss expects log-probabilities as input, not raw logits
+            loss_policy = criterion_policy(F.log_softmax(policy_logits, dim=1), policy_targets)
 
             loss = (alpha * loss_value) + (policy_weight * loss_policy)
             loss.backward()

@@ -39,13 +39,30 @@ class MoveClassifier:
 
         try:
             state = torch.load(weights_path, map_location=self.device)
-            self.model.load_state_dict(state, strict=False)
-            self.model.to(self.device)
-            self.model.eval()
-            self.has_weights = True
+            # Filter out incompatible weights (e.g., different input channels)
+            filtered_state = {}
+            for key, value in state.items():
+                if key in self.model.state_dict() and value.shape == self.model.state_dict()[key].shape:
+                    filtered_state[key] = value
+                else:
+                    print(f"⚠️ Skipping incompatible weight: {key} (shape: {value.shape})")
+            
+            if filtered_state:
+                self.model.load_state_dict(filtered_state, strict=False)
+                self.model.to(self.device)
+                self.model.eval()
+                self.has_weights = True
+            else:
+                raise RuntimeError("No compatible weights found")
         except FileNotFoundError:
             print(f"Warning: Weights {weights_path} not found. Running on random initialization.")
             self.has_weights = False
+        except RuntimeError as e:
+            if "No compatible weights found" in str(e):
+                print(f"Warning: No compatible weights found. Running on random initialization.")
+                self.has_weights = False
+            else:
+                raise
 
     def encode_board(self, board: chess.Board) -> torch.Tensor:
         """Uses the correct 13-channel encoder."""
@@ -58,7 +75,7 @@ class MoveClassifier:
         except ValueError:
             move = chess.Move.from_uci(move_san)
 
-        who_moves = board.turn 
+        who_moves = board.turn
 
         # Step 1: Eval BEFORE move
         tensor_before = self.encode_board(board).unsqueeze(0).to(self.device)
@@ -103,9 +120,9 @@ class MoveClassifier:
         else:
             classification = "Blunder"
 
-        # Confidence via Policy Head
+        # Confidence via Policy Head - use from_square * 64 + to_square as index into 4096-dim output
         move_idx = move.from_square * 64 + move.to_square
-        policy_prob = policy_out[0, move_idx].item() if move_idx < 4096 else 0.0
+        policy_prob = policy_out[0, move_idx].item()
         confidence = float(policy_prob)
 
         return MoveClassificationResult(
@@ -131,8 +148,9 @@ class MoveClassifier:
         boards_before = []
         boards_after = []
         moves_parsed = []
+        legal_moves_list = []
 
-        # Prepare game boards
+        # Prepare game boards and get legal moves for each
         for item in batch_moves:
             board = chess.Board(item.board_fen)
             boards_before.append(board.copy())
@@ -141,6 +159,9 @@ class MoveClassifier:
             except ValueError:
                 m = chess.Move.from_uci(item.move_san)
             moves_parsed.append(m)
+            
+            # Get legal moves for policy indexing
+            legal_moves_list.append(list(board.legal_moves))
             
             board.push(m)
             boards_after.append(board)
@@ -160,6 +181,7 @@ class MoveClassifier:
             b_before = boards_before[idx]
             b_after = boards_after[idx]
             m = moves_parsed[idx]
+            legal_moves = legal_moves_list[idx]
             
             v_b = values_before[idx].item()
             v_a = values_after[idx].item()
@@ -185,8 +207,9 @@ class MoveClassifier:
             else:
                 classification = "Blunder"
 
-            m_idx = m.from_square * 64 + m.to_square
-            prob = policies[idx, m_idx].item() if m_idx < 4096 else 0.0
+            # Use from_square * 64 + to_square as index into 4096-dim policy output
+            move_idx = m.from_square * 64 + m.to_square
+            prob = policies[idx, move_idx].item()
             conf = float(min(100.0, prob * 100.0))
 
             results.append(MoveClassificationResult(

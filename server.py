@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi.middleware.cors import CORSMiddleware
 import chess
 import chess.engine
@@ -17,8 +19,8 @@ app = FastAPI(title="Chess Bot API", version="2.0")
 STOCKFISH_PATH = "./stockfish-ubuntu-x86-64-avx2"
 stockfish_engine = None
 
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global stockfish_engine
     if os.path.exists(STOCKFISH_PATH):
         try:
@@ -28,13 +30,14 @@ def startup_event():
             print(f"❌ Failed to start Stockfish: {e}")
     else:
         print(f"⚠️ Stockfish not found at {STOCKFISH_PATH}!")
-
-@app.on_event("shutdown")
-def shutdown_event():
-    global stockfish_engine
+        
+    yield
+    
     if stockfish_engine:
         stockfish_engine.quit()
         print("🛑 Stockfish engine closed.")
+
+app = FastAPI(title="Chess Bot API", version="2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,7 +71,6 @@ print(f"Unified classifier loaded in {classifier_load_time:.2f} seconds")
 
 start_time = time.time()
 print("Initializing Unified MCTS engine...")
-# Optimized MCTS with unified model policy
 engine = UnifiedMCTS(
     unified_model=classifier,
     cpuct=2.0,
@@ -84,51 +86,81 @@ print(f"=== Total startup time: {total_startup_time:.2f} seconds ===")
 
 
 def get_stockfish_verdict(board: chess.Board, played_move: chess.Move, move_san: str) -> str:
-    """Улучшенная функция получения вердикта с принудительной очисткой кэша движка"""
     if stockfish_engine is None:
-        return "Good"
+        return "N/A"
     try:
-        # СБРОС ХЭШ-ТАБЛИЦЫ: убирает "память" движка. Оценка одной позиции всегда будет строго одинаковой!
         stockfish_engine.configure({"Clear Hash": True})
-        
         move_limit = chess.engine.Limit(depth=18)
         
-        # 1. Анализируем позицию ДО хода
+        current_player = board.turn
+        
         analysis = stockfish_engine.analyse(board, move_limit)
         best_move = analysis.get("move")
-        best_score = analysis["score"].white().score(mate_score=10000)
-
+        
         if played_move == best_move:
             return "Best"
-
-        # 2. Анализируем позицию ПОСЛЕ хода
+            
+        pov_best_score = analysis["score"].pov(current_player)
+        
         board_after = board.copy()
         board_after.push(played_move)
         
-        # Очищаем хэш еще раз перед вторым анализом для точности
+        if board_after.is_checkmate():
+            return "Best"
+            
         stockfish_engine.configure({"Clear Hash": True})
         analysis_after = stockfish_engine.analyse(board_after, move_limit)
-        played_score = analysis_after["score"].white().score(mate_score=10000)
+        
+        pov_played_score = analysis_after["score"].pov(current_player)
+        
+        if pov_best_score.is_mate() and pov_best_score.mate() > 0:
+            if not pov_played_score.is_mate() or pov_played_score.mate() <= 0:
+                return "Blunder"
+            mate_diff = pov_played_score.mate() - pov_best_score.mate()
+            if mate_diff > 3: 
+                return "Mistake"
+            elif mate_diff > 1:
+                return "Inaccuracy"
+            return "Good"
 
-        # Считаем разницу (потерю) в зависимости от того, чей был ход
-        if board.turn == chess.WHITE:
-            loss = (best_score - played_score) / 100.0
+        if pov_best_score.is_mate() and pov_best_score.mate() < 0:
+            if pov_played_score.is_mate() and pov_played_score.mate() < 0:
+                if pov_played_score.mate() > pov_best_score.mate(): 
+                    return "Blunder"
+                return "Good"
+            return "Best"
+
+        if pov_played_score.is_mate() and pov_played_score.col().mate() < 0:
+            return "Blunder"
+
+        best_cp = pov_best_score.score(mate_score=10000)
+        played_cp = pov_played_score.score(mate_score=10000)
+        
+        if best_cp is None or played_cp is None:
+            return "N/A"
+            
+        loss = (best_cp - played_cp) / 100.0
+        if loss < 0:
+            loss = 0.0
+        
+        print(f"[DEBUG] Stockfish verdict: player={current_player}, best_cp={best_cp}, played_cp={played_cp}, loss={loss:.2f}")
+
+        if loss <= 0.02:
+            return "Best"
+        elif loss <= 0.07:
+            return "Excellent"
+        elif loss <= 0.15:
+            return "Good"
+        elif loss <= 0.30:
+            return "Inaccuracy"
+        elif loss <= 0.55:
+            return "Mistake"
         else:
-            loss = (played_score - best_score) / 100.0
-
-        if board_after.is_checkmate():
-            loss = -1.0
-
-        # Жесткие пороги классификации Стокфиша
-        if loss <= 0.02: return "Best"
-        elif loss <= 0.07: return "Excellent"
-        elif loss <= 0.15: return "Good"
-        elif loss <= 0.30: return "Inaccuracy"
-        elif loss <= 0.55: return "Mistake"
-        else: return "Blunder"
+            return "Blunder"
+            
     except Exception as e:
         print(f"[ERROR] Stockfish analysis failed: {e}")
-        return "Good"
+        return "N/A"
 
 
 @app.get("/")
@@ -162,11 +194,11 @@ def analyze_move(fen: str, move_san: str):
         clean_move_san = board.san(move)
 
         try:
-            classes, _, _ = classifier.classify_moves_batch(board, [clean_move_san])
-            nn_class = classes[0] if classes else "Good"
+            nn_result = classifier.classify_move(fen, clean_move_san)
+            nn_class = nn_result.classification
         except Exception as e:
             print(f"[WARNING] NN Classification failed: {e}")
-            nn_class = "Good"
+            nn_class = "N/A"
 
         ideal_class = get_stockfish_verdict(board, move, clean_move_san)
         
@@ -219,8 +251,8 @@ def get_move(fen: str, simulations: int = 100):
         # Get NN classification
         classify_start = time.time()
         try:
-            classes, _, _ = classifier.classify_moves_batch(board, [move_san])
-            bot_nn_class = classes[0] if classes else "Good"
+            nn_result = classifier.classify_move(fen, move_san)
+            bot_nn_class = nn_result.classification
         except Exception:
             bot_nn_class = "Good"
         classify_time = time.time() - classify_start

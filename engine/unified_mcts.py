@@ -267,8 +267,8 @@ class UnifiedMCTS:
         policy_logits = self.model.get_policy(board, top_k)
 
         policy = {}
-        for move in legal_moves:
-            policy[move.uci()] = policy_logits[move.from_square * 64 + move.to_square].item()
+        for idx, move in enumerate(legal_moves):
+            policy[move.uci()] = policy_logits[idx].item()
 
         total = sum(policy.values())
         if total > 0:
