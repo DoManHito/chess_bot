@@ -3,24 +3,25 @@ import sqlite3
 import json
 import chess
 import shutil
+import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 import multiprocessing as mp
 from functools import partial
 
-from classifiers.move_classifier import MoveClassifier
+from classifiers.move_classifier import MoveClassifier, MoveData
 from engine.unified_mcts import UnifiedMCTS
-from models.unified_chess_nets import ChessCoreNet, UnifiedMoveClassifierNet, LookaheadMoveData
+from models.unified_chess_nets import ChessCoreNet, UnifiedMoveClassifierNet
 from classifiers.classification_config import CLASS_NAMES
 from classifiers.self_play_dataset import ChessSelfPlayDataset, LookaheadChessSelfPlayDataset
 
 
 def init_self_play_db(db_path: str):
+    """Инициализация таблицы самоигры в соответствии с README.md схемы данных."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -42,382 +43,295 @@ def init_self_play_db(db_path: str):
 
 
 def get_next_game_id(db_path: str) -> int:
-    """
-    Get the next game ID for self-play games.
-
-    Args:
-        db_path: Path to the SQLite database
-
-    Returns:
-        Next available game ID
-    """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT MAX(game_id) FROM self_play_moves")
     row = cursor.fetchone()
+    max_id = row[0] if row and row[0] is not None else 0
     conn.close()
-    return (row[0] + 1) if row[0] is not None else 1
+    return max_id + 1
 
 
-def play_one_game_with_lookahead(game_id, bot_weights, num_simulations, temperature, db_path, lookahead_depth=2):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+def generate_lookahead_sequences(board: chess.Board, root_moves_uci: list, root_mcts_probs: list, lookahead_depth: int, evaluator: MoveClassifier):
+    """
+    Корректная генерация цепочек предсказаний вглубь без привязки к корневым индексам ходов.
+    """
+    if lookahead_depth <= 0:
+        return None
 
-    # Initialize evaluator and MCTS engine
+    current_board = board.copy()
+    sequence_moves = []
+    sequence_classes = []
+
+    # Первый ход выбираем на основе распределения вероятностей MCTS
+    if root_moves_uci and len(root_mcts_probs) == len(root_moves_uci):
+        chosen_uci = np.random.choice(root_moves_uci, p=root_mcts_probs)
+        move = chess.Move.from_uci(chosen_uci)
+    else:
+        legal_moves = list(current_board.legal_moves)
+        if not legal_moves:
+            return None
+        move = random.choice(legal_moves)
+        chosen_uci = move.uci()
+
+    turn_label = "White" if current_board.turn == chess.WHITE else "Black"
+    move_data = MoveData(board_fen=current_board.fen(), move_san=current_board.san(move), 
+                         turn_num=current_board.fullmove_number, turn_label=turn_label)
+    try:
+        res = evaluator.classify_moves_batch([move_data])
+        cls = res[0].classification if res else "Good"
+    except:
+        cls = "Good"
+
+    sequence_moves.append(chosen_uci)
+    sequence_classes.append(cls)
+    current_board.push(move)
+
+    # Последующие ходы симуляции
+    for _ in range(1, lookahead_depth):
+        if current_board.is_game_over():
+            break
+        legal_moves = list(current_board.legal_moves)
+        if not legal_moves:
+            break
+
+        # В глубине симулируем выбор случайного легального ответа (или лучшего по эвристике)
+        move = random.choice(legal_moves)
+        chosen_uci = move.uci()
+
+        turn_label = "White" if current_board.turn == chess.WHITE else "Black"
+        move_data = MoveData(board_fen=current_board.fen(), move_san=current_board.san(move), 
+                             turn_num=current_board.fullmove_number, turn_label=turn_label)
+        try:
+            res = evaluator.classify_moves_batch([move_data])
+            cls = res[0].classification if res else "Good"
+        except:
+            cls = "Good"
+
+        sequence_moves.append(chosen_uci)
+        sequence_classes.append(cls)
+        current_board.push(move)
+
+    return {
+        'lookahead_depth': len(sequence_moves),
+        'future_moves': sequence_moves,
+        'final_classification': sequence_classes[-1] if sequence_classes else "Good",
+        'move_sequence_classes': sequence_classes
+    }
+
+
+def play_one_game_with_lookahead(game_id: int, bot_weights: str, num_simulations: int, temperature: float, db_path: str, lookahead_depth: int = 2):
+    # Инициализируем классификатор-обертку для MCTS
     evaluator = MoveClassifier(weights_path=bot_weights, device="cpu")
     evaluator.model.eval()
-    mcts = UnifiedMCTS(unified_model=evaluator.model, cpuct=2.0, max_simulations=num_simulations, top_moves_ratio=0.3, policy_output_dim=64)
+
+    # Передаем сам классификатор, так как MCTS вызывает метод пакетной оценки ходов
+    mcts = UnifiedMCTS(unified_model=evaluator, cpuct=2.0, max_simulations=num_simulations, top_moves_ratio=0.3, policy_output_dim=64)
 
     board = chess.Board()
     game_history = []
 
-    # Play until game over or 300 moves
-    while not board.is_game_over() and len(game_history) < 300:
+    while not board.is_game_over() and len(game_history) < 250:
         fen_before = board.fen()
 
-        # Get MCTS visit counts for all legal moves
-        _, visit_dict = mcts.search(board, num_simulations=num_simulations)
+        # Запуск поиска MCTS
+        _, visit_dict = mcts.search(board, num_simulations=num_simulations, temperature=temperature)
         if not visit_dict:
             break
 
         moves_uci_list = list(visit_dict.keys())
         mcts_visits = np.array(list(visit_dict.values()), dtype=np.float32)
+        total_visits = mcts_visits.sum()
 
-        # Temperature-scaled move selection
+        if total_visits > 0:
+            mcts_probs = mcts_visits / total_visits
+        else:
+            mcts_probs = np.ones_like(mcts_visits) / len(mcts_visits)
+
+        # Выбор хода на основе температуры
         if temperature > 0:
             exp_visits = mcts_visits ** (1.0 / (temperature + 1e-8))
             sum_exp = exp_visits.sum()
             move_probabilities = exp_visits / sum_exp if sum_exp > 0 else np.ones_like(exp_visits) / len(exp_visits)
-
             chosen_move_uci = np.random.choice(moves_uci_list, p=move_probabilities)
             move = chess.Move.from_uci(chosen_move_uci)
         else:
             best_idx = np.argmax(mcts_visits)
-            move = chess.Move.from_uci(moves_uci_list[best_idx])
+            chosen_move_uci = moves_uci_list[best_idx]
+            move = chess.Move.from_uci(chosen_move_uci)
 
-        # Calculate normalized MCTS probabilities
-        total_visits = mcts_visits.sum()
-        mcts_probs = mcts_visits / total_visits if total_visits > 0 else np.ones_like(mcts_visits) / len(mcts_visits)
+        # Честная структура MCTS policy для Option A (сохраняем распределение ходов)
+        mcts_policy_dict = {m: float(p) for m, p in zip(moves_uci_list, mcts_probs)}
 
-        # Build class target distribution from neural network evaluation
-        moves_san = []
-        valid_indices = []
-        class_target_distribution = np.zeros(len(CLASS_NAMES), dtype=np.float32)
+        # Генерация цепочки lookahead
+        lookahead_data = generate_lookahead_sequences(board, moves_uci_list, list(mcts_probs), lookahead_depth, evaluator)
 
-        for idx, mu in enumerate(moves_uci_list):
-            try:
-                m_obj = chess.Move.from_uci(mu)
-                moves_san.append(board.san(m_obj))
-                valid_indices.append(idx)
-            except Exception:
-                class_target_distribution[0] += mcts_probs[idx]
-
-        if moves_san:
-            classes, _, _ = evaluator.classify_moves_batch(board, moves_san)
-            for cls, idx in zip(classes, valid_indices):
-                c_idx = CLASS_NAMES.index(cls) if cls in CLASS_NAMES else 0
-                class_target_distribution[c_idx] += mcts_probs[idx]
-
-        # Normalize the distribution
-        sum_dist = class_target_distribution.sum()
-        if sum_dist > 0:
-            class_target_distribution /= sum_dist
-        else:
-            class_target_distribution = np.ones(len(CLASS_NAMES), dtype=np.float32) / len(CLASS_NAMES)
-
-        class_policy_dict = {CLASS_NAMES[i]: float(class_target_distribution[i]) for i in range(len(CLASS_NAMES))}
-
-        # Generate lookahead sequences
-        lookahead_data = generate_lookahead_sequences(board, moves_san, mcts_probs, moves_uci_list, lookahead_depth, evaluator)
-
-        # Record this position
         game_history.append({
             'fen_before': fen_before,
             'move_uci': move.uci(),
-            'class_policy_dict': class_policy_dict,
-            'lookahead_data': lookahead_data
+            'mcts_policy_dict': mcts_policy_dict,
+            'lookahead_data': lookahead_data,
+            'turn': board.turn
         })
         board.push(move)
 
-    # Determine game result value
+    # Определение исхода партии
     result = board.result()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    value_white = 0.0
     if result == "1-0":
         value_white = 1.0
     elif result == "0-1":
         value_white = -1.0
-    else:
-        value_white = 0.0
 
-    # Save each position with its policy, evaluation value, and lookahead data
+    # Сохранение всех ходов в базу данных
     for history_entry in game_history:
         fen_before = history_entry['fen_before']
         move_uci = history_entry['move_uci']
-        class_policy_dict = history_entry['class_policy_dict']
+        mcts_policy_dict = history_entry['mcts_policy_dict']
         lookahead_data = history_entry['lookahead_data']
+        turn = history_entry['turn']
 
-        current_board = chess.Board(fen_before)
-        actual_value = value_white if current_board.turn == chess.WHITE else -value_white
+        # Значение ценности с точки зрения ходившего игрока
+        actual_value = value_white if turn == chess.WHITE else -value_white
 
-        # Save basic data
-        cursor.execute("""
-            INSERT INTO self_play_moves (game_id, fen_before, move_uci, mcts_policy, result_value)
-            VALUES (?, ?, ?, ?, ?)
-        """, (game_id, fen_before, move_uci, json.dumps(class_policy_dict), actual_value))
-
-        # Save lookahead data if available
         if lookahead_data:
-            lookahead_depth = lookahead_data.get('lookahead_depth', 0)
-            future_moves = lookahead_data.get('future_moves', [])
-            final_classification = lookahead_data.get('final_classification', 'Good')
-            move_sequence_classes = lookahead_data.get('move_sequence_classes', [CLASS_NAMES[3]])
-
             cursor.execute("""
                 INSERT INTO self_play_moves (game_id, fen_before, move_uci, mcts_policy, result_value,
-                                            lookahead_depth, future_moves, final_classification, move_sequence_classes, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (game_id, fen_before, move_uci, json.dumps(class_policy_dict), actual_value,
-                  lookahead_depth, json.dumps(future_moves), final_classification, json.dumps(move_sequence_classes), None))
+                                            lookahead_depth, future_moves, final_classification, move_sequence_classes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (game_id, fen_before, move_uci, json.dumps(mcts_policy_dict), actual_value,
+                  lookahead_data['lookahead_depth'], json.dumps(lookahead_data['future_moves']),
+                  lookahead_data['final_classification'], json.dumps(lookahead_data['move_sequence_classes'])))
+        else:
+            cursor.execute("""
+                INSERT INTO self_play_moves (game_id, fen_before, move_uci, mcts_policy, result_value)
+                VALUES (?, ?, ?, ?, ?)
+            """, (game_id, fen_before, move_uci, json.dumps(mcts_policy_dict), actual_value))
 
     conn.commit()
     conn.close()
 
 
-def generate_lookahead_sequences(board, moves_san, mcts_probs, moves_uci_list, lookahead_depth, evaluator):
-    if lookahead_depth <= 0:
-        return None
-
-    # Generate lookahead sequences
-    sequences = []
-    for depth in range(1, lookahead_depth + 1):
-        current_board = board.copy()
-        sequence_moves = []
-        sequence_classes = []
-        sequence_probs = []
-
-        for _ in range(depth):
-            if current_board.is_game_over():
-                break
-
-            # Get legal moves
-            legal_moves = list(current_board.legal_moves)
-            if not legal_moves:
-                break
-
-            # Convert to SAN and probabilities
-            move_sans = [current_board.san(m) for m in legal_moves]
-
-            # Create a mapping from UCI move to index in mcts_probs
-            # mcts_probs is indexed by position in moves_uci_list (MCTS explored moves only)
-            move_to_idx = {move: i for i, move in enumerate(moves_uci_list)}
-            
-            # Filter to only include moves that were explored by MCTS
-            mcts_legal_moves = [m for m in legal_moves if m in move_to_idx]
-            if not mcts_legal_moves:
-                # If no moves were explored, use uniform distribution
-                move_probs = [1.0 / len(move_sans)] * len(move_sans)
-            else:
-                # Get probabilities for the legal moves that MCTS explored
-                mcts_indices = [move_to_idx[m] for m in mcts_legal_moves]
-                move_probs = [mcts_probs[i] for i in mcts_indices]
-
-            # Normalize probabilities
-            total_prob = sum(move_probs)
-            if total_prob > 0:
-                move_probs = [p / total_prob for p in move_probs]
-            else:
-                move_probs = [1.0 / len(move_sans)] * len(move_sans)
-
-            # Select next move based on probabilities
-            chosen_idx = np.random.choice(len(move_sans), p=move_probs)
-            chosen_move_san = move_sans[chosen_idx]
-
-            sequence_moves.append(chosen_move_san)
-            sequence_probs.append(move_probs[chosen_idx])
-
-            # Evaluate the move
-            try:
-                classes, _, _ = evaluator.classify_moves_batch(current_board, [chosen_move_san])
-                sequence_classes.append(classes[0] if classes else "Good")
-            except Exception:
-                sequence_classes.append("Good")
-
-            # Make the move
-            try:
-                move = current_board.parse_san(chosen_move_san)
-                current_board.push(move)
-            except Exception:
-                break
-
-        if sequence_moves:
-            sequences.append({
-                'moves': sequence_moves,
-                'classes': sequence_classes,
-                'probs': sequence_probs
-            })
-
-    if not sequences:
-        return None
-
-    # Use the longest sequence
-    best_sequence = max(sequences, key=lambda x: len(x['moves']))
-
-    return {
-        'lookahead_depth': len(best_sequence['moves']),
-        'future_moves': best_sequence['moves'],
-        'final_classification': best_sequence['classes'][-1] if best_sequence['classes'] else "Good",
-        'move_sequence_classes': best_sequence['classes']
-    }
-
-
-def run_self_play_session(num_games: int, num_simulations: int, temperature: float,
-                          db_path: str, bot_weights: str, num_workers: int, lookahead_depth: int = 2):
-    print(f"\n----------------------------------------")
-    print(f"🎮 PHASE 1: SELF-PLAY GAME GENERATION ({num_games} games)")
-    print(f"----------------------------------------")
-    print(f"🚀 Starting {num_workers} processes to generate {num_games} games with lookahead depth={lookahead_depth}...")
-
+def run_self_play_session(num_games: int, num_simulations: int, temperature: float, db_path: str, bot_weights: str, num_workers: int = 1, lookahead_depth: int = 0):
+    print(f"🎬 Generating {num_games} self-play games using {num_workers} processes...")
+    init_self_play_db(db_path)
     start_game_id = get_next_game_id(db_path)
-    game_ids = list(range(start_game_id, start_game_id + num_games))
 
     if num_workers <= 1:
-        for gid in tqdm(game_ids, desc="Synchronous generation"):
-            play_one_game_with_lookahead(gid, bot_weights, num_simulations, temperature, db_path, lookahead_depth)
+        for i in tqdm(range(num_games), desc="Self-play games"):
+            play_one_game_with_lookahead(start_game_id + i, bot_weights, num_simulations, temperature, db_path, lookahead_depth)
     else:
-        worker_func = partial(play_one_game_with_lookahead, bot_weights=bot_weights,
-                              num_simulations=num_simulations, temperature=temperature, db_path=db_path,
-                              lookahead_depth=lookahead_depth)
-        with mp.Pool(processes=num_workers) as pool:
-            list(tqdm(pool.imap_unordered(worker_func, game_ids), total=num_games, desc="Game generation"))
-
-    print(f"✅ All {num_games} games generated and saved with lookahead data.")
+        ctx = mp.get_context('spawn')
+        pool = ctx.Pool(num_workers)
+        worker_fn = partial(play_one_game_with_lookahead, bot_weights=bot_weights, num_simulations=num_simulations,
+                            temperature=temperature, db_path=db_path, lookahead_depth=lookahead_depth)
+        
+        game_ids = [start_game_id + i for i in range(num_games)]
+        list(tqdm(pool.imap_unordered(worker_fn, game_ids), total=num_games, desc="Parallel Self-play"))
+        pool.close()
+        pool.join()
 
 
 def train_unified_model(epochs: int, batch_size: int, lr: float, alpha: float, policy_weight: float, db_path: str, use_lookahead: bool = False, use_stockfish_policy: bool = False):
-    print("\n" + "-"*40)
-    print("🧠 PHASE 2: UNIFIED MODEL TRAINING (RL + Policy)")
-    print("-" * 40)
+    print("\n" + "-"*50)
+    print("🧠 PHASE 2: UNIFIED REINFORCEMENT LEARNING (OPTION A)")
+    print("-" * 50)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"📡 TARGET DEVICE: {device}")
+    print(f"📡 Target Training Device: {device}")
 
-    # Load dataset
     if use_lookahead:
         dataset = LookaheadChessSelfPlayDataset(db_path=db_path, device=device)
     else:
         dataset = ChessSelfPlayDataset(db_path=db_path)
 
-    if len(dataset) < 50:
-        print("⚠️ Too little data for training. Skipping...")
+    if len(dataset) < batch_size:
+        print(f"⚠️ Too little data ({len(dataset)} samples) for training. Skipping iteration...")
         return
 
-    # Split data
     train_size = int(0.9 * len(dataset))
     train_dataset, val_dataset = random_split(dataset, [train_size, len(dataset) - train_size])
 
-    # Create data loader
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=2,
-        pin_memory=(device.type == "cuda")
-    )
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    # Initialize unified model
-    core = ChessCoreNet(in_channels=25)
-    model = UnifiedMoveClassifierNet(core_net=core, num_classes=len(CLASS_NAMES), policy_output_dim=64)
+    # Строго 13 каналов под архитектуру Option A
+    core = ChessCoreNet(in_channels=13)
+    model = UnifiedMoveClassifierNet(core_net=core)
 
     weights_path = "models/weights_bot.pth"
     if os.path.exists(weights_path):
         model.load_state_dict(torch.load(weights_path, map_location=device), strict=False)
-
     model.to(device)
-    model.eval()
 
-    # Loss functions
-    criterion_class = nn.CrossEntropyLoss()
     criterion_value = nn.MSELoss()
-    criterion_policy = nn.KLDivLoss(log_target=True)
-
-    # Create policy targets from dataset
-    if use_stockfish_policy:
-        print("📊 Loading Stockfish policy data...")
-        from classifiers.stockfish_policy_dataset import StockfishPolicyDataset
-        policy_dataset = StockfishPolicyDataset(json_path="stockfish_policy_data.json", device=device)
-        policy_targets = torch.tensor([d['policy_score'] for d in policy_dataset.data], dtype=torch.float32)
-        # Convert single scores to distributions (one-hot-like based on move index)
-        # For now, use the score as a scalar policy target
-        policy_targets = policy_targets.unsqueeze(1)  # Shape: (N, 1)
-    else:
-        policy_dataset = LookaheadChessSelfPlayDataset(db_path=db_path, device=device)
-        policy_samples = []
-        for sample in policy_dataset:
-            policy_samples.append(sample['policy_dict'])
-        policy_targets = torch.tensor([list(p.values()) for p in policy_samples], dtype=torch.float32)
-        policy_targets = policy_targets / policy_targets.sum(dim=1, keepdim=True)  # Normalize
-
+    criterion_policy = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
 
-    # Training loop
     for epoch in range(epochs):
         model.train()
-        total_loss = 0
+        total_loss = 0.0
 
         progress_bar = tqdm(train_loader, desc=f"   Epoch {epoch+1}/{epochs}", leave=True)
-        for inputs, class_targets, value_targets in progress_bar:
-            inputs = inputs.to(device, non_blocking=True)
-            class_targets = class_targets.to(device, non_blocking=True)
-            value_targets = value_targets.to(device, non_blocking=True)
+        for batch in progress_bar:
+            # Обработка динамического формата возврата данных из датасета самоигры
+            inputs = batch[0].to(device, non_blocking=True)
+            value_targets = batch[1].to(device, non_blocking=True).view(-1, 1)
+            policy_targets = batch[2].to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            class_logits, value_preds, policy_logits = model(inputs)
+            
+            # В Option A классификация всегда возвращает None
+            _, value_preds, policy_logits = model(inputs)
 
-            loss_class = criterion_class(class_logits, class_targets)
             loss_value = criterion_value(value_preds.view(-1), value_targets.view(-1))
+            loss_policy = criterion_policy(policy_logits, policy_targets)
 
-            # Policy loss - different handling for Stockfish vs lookahead data
-            if use_stockfish_policy:
-                # Stockfish policy: scalar score, use MSE instead of KL divergence
-                policy_targets = policy_targets.to(device).view(-1, 1)  # Shape: (N, 1)
-                loss_policy = criterion_value(F.softmax(policy_logits, dim=1).squeeze(1), policy_targets)
-            else:
-                # Lookahead policy: distribution, use KL divergence
-                loss_policy = criterion_policy(F.log_softmax(policy_logits, dim=1), policy_targets.to(device))
-
-            loss = loss_class + alpha * loss_value + policy_weight * loss_policy
+            # Суммарный лосс без головы классификации
+            loss = (alpha * loss_value) + (policy_weight * loss_policy)
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
-            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
+            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}", "ValLoss": f"{loss_value.item():.4f}"})
 
-    # Save trained weights
+    os.makedirs("models", exist_ok=True)
     torch.save(model.state_dict(), weights_path)
-    print(f"✅ Unified model weights saved to {weights_path}")
+    print(f"✅ Unified model RL weights successfully saved to {weights_path}")
 
 
-def apply_sliding_window(db_path: str, keep_last_n_games: int):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT game_id FROM self_play_moves ORDER BY game_id DESC")
-    rows = cursor.fetchall()
+def apply_sliding_window(db_path: str, keep_last_n: int = 5000):
+    """Очистка старых ходов для удержания фокуса обучения на свежих партиях self-play."""
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM self_play_moves")
+        total = cursor.fetchone()[0]
+        if total > keep_last_n:
+            to_delete = total - keep_last_n
+            cursor.execute(f"""
+                DELETE FROM self_play_moves 
+                WHERE id IN (SELECT id FROM self_play_moves ORDER BY id ASC LIMIT {to_delete})
+            """)
+            conn.commit()
+            print(f"🧹 Sliding window: removed {to_delete} oldest moves from self_play_moves.")
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Sliding window cleaning failed: {e}")
 
-    if len(rows) > keep_last_n_games:
-        last_allowed_id = rows[keep_last_n_games - 1][0]
-        cursor.execute("DELETE FROM self_play_moves WHERE game_id < ?", (last_allowed_id,))
-        deleted_rows = cursor.rowcount
-        conn.commit()
-        if deleted_rows > 0:
-            print(f"🧹 Sliding Window: Deleted {deleted_rows} old positions (keeping top-{keep_last_n_games} games).")
-    conn.close()
 
-
-def run_continuous_loop(iterations: int, games_per_iter: int, sims: int, epochs: int,
-                        keep_last_n: int, db_path: str, temperature: float = 1.2,
+def run_continuous_loop(iterations: int = 5, games_per_iter: int = 10, sims: int = 40,
+                        temperature: float = 1.0, epochs: int = 3, db_path: str = "chess_bot.db",
                         num_workers: int = 1, use_lookahead: bool = False, lookahead_depth: int = 2,
-                        use_stockfish_policy: bool = False):
+                        use_stockfish_policy: bool = False, keep_last_n: int = 1000):
+    """
+    Главная точка входа для конвейера RL-обучения.
+    """
     init_self_play_db(db_path)
-    print(f"\n🚀 STARTING TRAINING LOOP FOR {iterations} ITERATIONS (workers={num_workers}, lookahead={use_lookahead}, stockfish_policy={use_stockfish_policy})")
+    print(f"\n🚀 STARTING RL TRAINING PIPELINE FOR {iterations} ITERATIONS")
 
     classifier_weights = "models/weights_classifier.pth"
     bot_weights = "models/weights_bot.pth"
@@ -427,18 +341,21 @@ def run_continuous_loop(iterations: int, games_per_iter: int, sims: int, epochs:
             shutil.copy(classifier_weights, bot_weights)
             print(f"📦 Base weights copied from {classifier_weights} to {bot_weights}")
         else:
-            print(f"⚠️ Warning: {bot_weights} not found. Training will start from scratch!")
+            print(f"⚠️ Warning: {bot_weights} not found. Starting RL from scratch!")
 
     for i in range(iterations):
-        print(f"\n{'='*50}\n🌟 GLOBAL ITERATION {i+1}/{iterations}\n{'='*50}")
+        print(f"\n{'='*60}\n🌟 GLOBAL RL ITERATION {i+1}/{iterations}\n{'='*60}")
 
+        # Шаг 1: Генерация новых партий через MCTS самоигру
         run_self_play_session(num_games=games_per_iter, num_simulations=sims,
                               temperature=temperature, db_path=db_path,
                               bot_weights=bot_weights, num_workers=num_workers,
                               lookahead_depth=lookahead_depth if use_lookahead else 0)
 
-        train_unified_model(epochs=epochs, batch_size=64, lr=1e-3, alpha=0.5,
-                            policy_weight=1.0, db_path=db_path, use_lookahead=use_lookahead,
-                            use_stockfish_policy=use_stockfish_policy)
+        # Шаг 2: Скользящее окно датасета (чтобы избежать стагнации градиента)
+        apply_sliding_window(db_path, keep_last_n=keep_last_n)
 
-        apply_sliding_window(db_path, keep_last_n_games=keep_last_n)
+        # Шаг 3: Дообучение нейросети на обновленной базе данных
+        train_unified_model(epochs=epochs, batch_size=64, lr=1e-3, alpha=0.5,
+                            policy_weight=1.0, db_path=db_path, 
+                            use_lookahead=use_lookahead, use_stockfish_policy=use_stockfish_policy)

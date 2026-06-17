@@ -268,7 +268,7 @@ class UnifiedMCTS:
 
         policy = {}
         for move in legal_moves:
-            policy[move.uci()] = policy_logits[move.to_square].item()
+            policy[move.uci()] = policy_logits[move.from_square * 64 + move.to_square].item()
 
         total = sum(policy.values())
         if total > 0:
