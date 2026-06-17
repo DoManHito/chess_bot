@@ -95,16 +95,11 @@ class MoveClassifier:
             _, value_after_out, _ = self.model(tensor_after)
             v_after = value_after_out.item()
 
-        # Step 4: Calculate evaluation drop from current active player's view
-        if who_moves == chess.WHITE:
-            loss = v_before - v_after
-        else:
-            loss = v_after - v_before
+        loss = v_before + v_after
 
         if board.is_checkmate():
             loss = -1.0  # Checkmate is always best
 
-        # Step 5: Class thresholds mapping for Value range [-1, 1]
         if loss <= 0.02:
             classification = "Best"
         elif loss <= 0.07:
@@ -181,10 +176,7 @@ class MoveClassifier:
             v_b = values_before[idx].item()
             v_a = values_after[idx].item()
             
-            if b_before.turn == chess.WHITE:
-                loss = v_b - v_a
-            else:
-                loss = v_a - v_b
+            loss = v_b + v_a
 
             if b_after.is_checkmate():
                 loss = -1.0
