@@ -1,4 +1,4 @@
-# Chess Bot - Zjednoczony Model z Możliwością Przewidywania
+# Chess Bot
 
 System analizy szachów wykorzystujący zjednoczoną sieć neuronową do klasyfikacji i oceny ruchów szachowych poprzez przewidywanie wartości. System oblicza jakość ruchu poprzez porównanie oceny pozycji przed i po każdym ruchu, eliminując potrzebę oddzielnego głowicy klasyfikacyjnej. Integracja z Stockfish dla dodatkowej weryfikacji ruchów.
 
