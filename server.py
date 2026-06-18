@@ -61,7 +61,7 @@ else:
     print("⚠️ Running on CPU - consider installing CUDA-enabled PyTorch")
 
 classifier = MoveClassifier(
-    weights_path="models/weights_bot.pth", 
+    weights_path="models/weights_bot copy.pth", 
     device=device,
 )
 classifier_load_time = time.time() - start_time
