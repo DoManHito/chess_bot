@@ -1,6 +1,6 @@
-# Chess Bot - Zjednoczony Model z Możliwością Przewidywania (Opcja A)
+# Chess Bot - Zjednoczony Model z Możliwością Przewidywania
 
-System analizy szachów wykorzystujący zjednoczoną sieć neuronową do klasyfikacji i oceny ruchów szachowych poprzez przewidywanie wartości. System oblicza jakość ruchu poprzez porównanie oceny pozycji przed i po każdym ruchu, eliminując potrzebę oddzielnego głowicy klasyfikacyjnej.
+System analizy szachów wykorzystujący zjednoczoną sieć neuronową do klasyfikacji i oceny ruchów szachowych poprzez przewidywanie wartości. System oblicza jakość ruchu poprzez porównanie oceny pozycji przed i po każdym ruchu, eliminując potrzebę oddzielnego głowicy klasyfikacyjnej. Integracja z Stockfish dla dodatkowej weryfikacji ruchów.
 
 ## Spis treści
 
@@ -8,7 +8,7 @@ System analizy szachów wykorzystujący zjednoczoną sieć neuronową do klasyfi
 - [Wymagania](#wymagania)
 - [Instalacja](#instalacja)
 - [Użycie](#użycie)
-- [Koniec Punktów API](#koniec-punktów-api)
+- [Endpointy API](#endpointy-api)
 - [Trening](#trening)
 - [Struktura Projektu](#struktura-projektu)
 - [Architektura Zjednoczonego Modelu](#architektura-zjednoczonego-modelu)
@@ -17,9 +17,9 @@ System analizy szachów wykorzystujący zjednoczoną sieć neuronową do klasyfi
 
 ## Opis Projektu
 
-Chess Bot to zaawansowany system analizy szachów wykorzystujący architekturę **Opcja A**:
+Chess Bot to zaawansowany system analizy szachów wykorzystujący zjednoczoną sieć neuronową do klasyfikacji i oceny ruchów szachowych poprzez przewidywanie wartości:
 
-- **Zjednoczony Model**: Jedna sieć neuronowa z głowicami Value i Policy (klasyfikacja obliczana poprzez różnicę wartości)
+- **Zjednoczony Model**: Jedna sieć neuronowa z głowicami Value i Policy (klasyfikacja obliczana poprzez sumę wartości przed i po ruchu)
 - **Uczenie z Przewidywaniem**: Trening na sekwencjach ruchów do zrozumienia konsekwencji każdego ruchu
 - **Klasifikuje ruchy** jako: Najlepszy, Wyśmienity, Dobry, Nieprecyzyjny, Błąd, Katastrofa
 - **Ocenia pozycje** używając wartości od -1 do 1
@@ -40,6 +40,7 @@ Chess Bot to zaawansowany system analizy szachów wykorzystujący architekturę 
 - matplotlib >= 3.4.0
 - seaborn >= 0.11.0
 - scikit-learn >= 0.24.0
+- python-chess-engine >= 0.14.0
 
 ## Instalacja
 
@@ -61,7 +62,7 @@ python server.py
 
 ## Użycie
 
-### Koniec Punktów API
+### Endpointy API
 
 - `GET /` - Informacje o API
 - `GET /analyze_move` - Przeanalizuj ruch (wymaga FEN i SAN)
@@ -85,8 +86,8 @@ python server.py
 **Odpowiedź `/analyze_move`:**
 ```json
 {
-  "nn_class": "Wyśmienity",
-  "ideal_class": "Najlepszy",
+  "nn_class": "Excellent",
+  "ideal_class": "Best",
   "move_san": "e4",
   "move_uci": "e2e4"
 }
@@ -97,8 +98,8 @@ python server.py
 {
   "move_uci": "e2e4",
   "move_san": "e4",
-  "bot_nn_class": "Wyśmienity",
-  "bot_ideal_class": "Najlepszy",
+  "bot_nn_class": "Excellent",
+  "bot_ideal_class": "Best",
   "visit_counts": {"e2e4": 45, "g1f3": 30, ...},
   "total_time": 0.234
 }
@@ -108,7 +109,7 @@ python server.py
 ```json
 {
   "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
-  "policy": {"e7e5": 0.35, "g8f6": 0.28, "g8f6": 0.15, ...},
+  "policy": {"e7e5": 0.35, "g8f6": 0.28, "e2e4": 0.10, ...},
   "total_moves": 64
 }
 ```
@@ -117,12 +118,10 @@ python server.py
 
 ### Nadzorowany Trening
 
-Trening na istniejących grach Stockfish z bazy danych używając delta oceny jako prawdy:
+Trening na istniejących grach Stockfish z bazy danych używając delta oceny jako prawdy. Model uczy się przewidywać wartość pozycji i politykę ruchów jednocześnie.
 
 ```bash
 python train_unified.py --mode supervised --epochs 10 --batch-size 256 --lr 1e-3 --alpha 0.5 --sample-rate 1.0
-lub
-python train_unified.py --mode rl --iterations 10 --games-per-iter 20 --sims 100 --temperature 1.0 --keep-last-n 5000 --epochs 3 --num-workers 2
 ```
 
 Opcje:
@@ -140,7 +139,7 @@ Opcje:
 Generuj gry samogry i trenuj z MCTS:
 
 ```bash
-python train_unified.py --mode rl --iterations 5 --games-per-iter 10 --sims 800 --epochs 3
+python train_unified.py --mode rl --iterations 10 --games-per-iter 20 --sims 100 --temperature 1.0 --keep-last-n 5000 --epochs 3 --num-workers 2
 ```
 
 Opcje:
@@ -169,26 +168,18 @@ Zalecane dla najlepszych wyników:
 ```
 chess_bot/
 ├── classifiers/              # Moduł klasyfikacji ruchów
-│   ├── classification_config.py    # Nazwy klas i progi
-│   ├── move_classifier.py          # Główny klasyfikator ruchów (Opcja A)
+│   ├── classification_config.py    # Konfiguracja progów klasyfikacji
+│   ├── move_classifier.py          # Główny klasyfikator ruchów
 │   └── self_play_dataset.py        # Zbiór danych treningowych samogry
-│
-├── database/                 # Moduł operacji bazy danych
-│   ├── schema.py             # Definicje schematu SQL
-│   ├── chess_db.py           # Operacje CRUD dla gier i ruchów
-│   └── migrate_db.py         # Skrypt migracji bazy danych
 │
 ├── engine/                   # Moduł silnika szachowego
 │   ├── unified_mcts.py       # Zjednoczony MCTS z głowicą policy
 │   └── rl_trainer.py         # Pętla treningu uczenia się wzmocnienia
 │
 ├── models/                   # Modele sieci neuronowej
-│   ├── unified_chess_nets.py # Zjednoczony model (Opcja A)
+│   ├── unified_chess_nets.py # Zjednoczony model
 │   ├── weights_bot.pth       # Wagi bota
 │   └── weights_bot copy.pth  # Zapasowe wagi
-│
-├── parsers/                  # Parserzy formatów
-│   └── pgn_parser.py         # Parser plików PGN z filtrem Stockfish
 │
 ├── train_unified.py          # Skrypt treningu zjednoczonego
 ├── server.py                 # Serwer FastAPI
@@ -200,13 +191,13 @@ chess_bot/
 
 ## Architektura Zjednoczonego Modelu
 
-### Opcja A: Klasyfikacja oparta na wartości
+### Klasyfikacja oparta na wartości
 
-Zjednoczony model wykorzystuje architekturę **Opcja A**, gdzie klasyfikacja jest obliczana poprzez różnicę wartości zamiast dedykowanej głowicy klasyfikacyjnej:
+Zjednoczony model wykorzystuje podejście, gdzie klasyfikacja jest obliczana poprzez sumę wartości przed i po ruchu zamiast dedykowanej głowicy klasyfikacyjnej:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Zjednoczony Model Szachowy (Opcja A)         │
+│              Zjednoczony Model Szachowy                  │
 │  ┌───────────────────────────────────────────────┐     │
 │  │           Wspólny Trzon (ChessCoreNet)         │     │
 │  │  (Conv2D + Bloki Residualne)                   │     │
@@ -223,14 +214,17 @@ Zjednoczony model wykorzystuje architekturę **Opcja A**, gdzie klasyfikacja jes
 └─────────────────────────────────────────────────────────┘
 
 Klasyfikacja jest obliczana jako:
-- strata = |value_before - value_after| (dla Białych)
-- strata = |value_after - value_before| (dla Czarnych)
+- strata = value_before + value_after (dla Białych)
+- strata = value_before + value_after (dla Czarnych)
+Suma ta oblicza utratę jakości: sieć ocenia pozycję zawsze z perspektywy gracza na ruchu. 
+Dla idealnego ruchu suma wynosi 0 (ocena przeciwnika po ruchu jest dokładnie przeciwna do naszej przed ruchem). 
+Im większa wartość dodatnia, tym większy błąd popełnił gracz.
 ```
 
 ### ChessCoreNet (Wspólny Trzon)
 - Wejście: **13-kanałowa** reprezentacja planszy (12 typów figur + wskaźnik ruchu)
-  - Kanały 0-5: Figury białe (Pion, Skoczek, Latający Słup, Wieża, Królowa, Król)
-  - Kanały 6-11: Figury czarne (Pion, Skoczek, Latający Słup, Wieża, Królowa, Król)
+  - Kanały 0-5: Figury białe (Pion, Skoczek, Goniec, Wieża, Królowa, Król)
+  - Kanały 6-11: Figury czarne (Pion, Skoczek, Goniec, Wieża, Królowa, Król)
   - Kanał 12: Aktywny ruch (1 = Białe, 0 = Czarne)
 - Początkowa konwolucja: jądro 3x3, 128 kanałów wyjściowych
 - 6 bloków residualnych z BatchNorm i ReLU
@@ -249,26 +243,26 @@ Klasyfikacja jest obliczana jako:
 
 ## Klasyfikacja Ruchów
 
-System klasyfikuje ruchy na podstawie delta oceny (zmiana wartości pozycji) przed i po ruchu:
+System klasyfikuje ruchy na podstawie sumy ocen pozycji przed i po ruchu:
 
 | Klasa | Opis | Zakres Delta |
 |-------|------|--------------|
-| **Najlepszy** | Najlepszy ruch | ≤ 0.02 |
-| **Wyśmienity** | Bardzo dobry ruch | ≤ 0.07 |
-| **Dobry** | Dobry ruch | ≤ 0.15 |
-| **Nieprecyzyjny** | Nieprecyzyjny ruch | ≤ 0.30 |
-| **Błąd** | Błąd | ≤ 0.55 |
-| **Katastrofa** | Katastrofa | > 0.55 |
+| **Best** | Najlepszy ruch | ≤ 0.02 |
+| **Excellent** | Bardzo dobry ruch | ≤ 0.07 |
+| **Good** | Dobry ruch | ≤ 0.15 |
+| **Inaccuracy** | Nieprecyzyjny ruch | ≤ 0.30 |
+| **Mistake** | Błąd | ≤ 0.55 |
+| **Blunder** | Katastrofa | > 0.55 |
 
 ### Priorytety Ruchów MCTS
 
 ```
-Najlepszy: 1.0
-Wyśmienity: 0.8
-Dobry: 0.5
-Nieprecyzyjny: 0.2
-Błąd: 0.05
-Katastrofa: 0.001
+Best: 1.0
+Excellent: 0.8
+Good: 0.5
+Inaccuracy: 0.2
+Mistake: 0.05
+Blunder: 0.001
 ```
 
 ### Pewność poprzez Głowicę Policy
