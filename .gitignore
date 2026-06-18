@@ -6,7 +6,7 @@ stockfish
 settings.json
 weights_bot copy.pth
 weights_bot copy 2.pth
-
+*.sql
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
